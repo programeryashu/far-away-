@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, Sun, Moon } from 'lucide-react';
+import { getUTCOffsetHours } from '../lib/time';
 
 interface TimezoneSyncProps {
   cityA: { name: string; timezone: string };
@@ -25,61 +26,45 @@ export const TimezoneSync: React.FC<TimezoneSyncProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  const getUTCOffset = (timeZone: string, date = new Date()) => {
+  const offsetA = getUTCOffsetHours(cityA.timezone, time);
+  const offsetB = getUTCOffsetHours(cityB.timezone, time);
+  const hourDiff = offsetB - offsetA;
+
+  // Formatting strings (defensive: an unexpected invalid zone must never crash the render)
+  const formatTime = (date: Date, timeZone: string) => {
     try {
-      const formatter = new Intl.DateTimeFormat('en-US', {
+      return date.toLocaleTimeString('en-US', {
         timeZone,
-        year: 'numeric',
-        month: 'numeric',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: 'numeric',
-        second: 'numeric',
-        hour12: false
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
       });
-      const parts = formatter.formatToParts(date);
-      const getVal = (type: string) => {
-        const p = parts.find(x => x.type === type);
-        return p ? parseInt(p.value, 10) : 0;
-      };
-
-      const year = getVal('year');
-      const month = getVal('month') - 1;
-      const day = getVal('day');
-      let hour = getVal('hour');
-      if (hour === 24) hour = 0;
-      const minute = getVal('minute');
-      const second = getVal('second');
-
-      const localWallTime = Date.UTC(year, month, day, hour, minute, second);
-      return (localWallTime - date.getTime()) / 3600000;
-    } catch (e) {
-      return 0;
+    } catch {
+      return date.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+      });
     }
   };
 
-  const offsetA = getUTCOffset(cityA.timezone, time);
-  const offsetB = getUTCOffset(cityB.timezone, time);
-  const hourDiff = offsetB - offsetA;
-
-  // Formatting strings
-  const formatTime = (date: Date, timeZone: string) => {
-    return date.toLocaleTimeString('en-US', {
-      timeZone,
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: true
-    });
-  };
-
   const formatDate = (date: Date, timeZone: string) => {
-    return date.toLocaleDateString('en-US', {
-      timeZone,
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric'
-    });
+    try {
+      return date.toLocaleDateString('en-US', {
+        timeZone,
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric'
+      });
+    } catch {
+      return date.toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric'
+      });
+    }
   };
 
   // Determine sleep/work/free status based on local hour

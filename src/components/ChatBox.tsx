@@ -1,11 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Cpu, Globe, CheckCheck } from 'lucide-react';
+import type { OrbitSync } from '../lib/broadcast';
+
+// Module-level monotonic counter for message IDs (avoids Date.now() in render/event closures).
+// The random suffix keeps IDs unique across two tabs on the same origin.
+let messageIdCounter = 0;
+const nextMessageId = () => `msg-${++messageIdCounter}-${Math.random().toString(36).slice(2, 6)}`;
 
 interface ChatBoxProps {
   cityA: { name: string; lat: number; lng: number; timezone: string };
   cityB: { name: string; lat: number; lng: number; timezone: string };
   nameA: string;
   nameB: string;
+  /** Live-tab sync channel; null when BroadcastChannel is unavailable. */
+  sync: OrbitSync | null;
+  /** True when a second tab is connected right now. */
+  hasPeer: boolean;
 }
 
 interface Message {
@@ -21,14 +31,22 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   cityA,
   cityB,
   nameA,
-  nameB
+  nameB,
+  sync,
+  hasPeer
 }) => {
+  // This tab is one of the two people: the host tab is User A, the remote tab
+  // is User B. Messages from my own side align right; the peer's align left.
+  const ownSide = sync?.side ?? 'host';
+  const ownName = ownSide === 'host' ? nameA || 'User A' : nameB || 'User B';
+  const peerName = ownSide === 'host' ? nameB || 'User B' : nameA || 'User A';
+
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      sender: nameB || 'User B',
+      sender: peerName,
       text: `Hey! Set up your location so we can calculate our orbital connection map.`,
-      timestamp: new Date(Date.now() - 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       status: 'delivered'
     }
   ]);
@@ -40,6 +58,24 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Inbound chat from a real second tab — arrive as delivered, never auto-reply.
+  useEffect(() => {
+    if (!sync) return;
+    return sync.onMessage((msg) => {
+      if (msg.type !== 'chat') return;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: msg.payload.id,
+          sender: msg.payload.sender,
+          text: msg.payload.text,
+          timestamp: msg.payload.timestamp,
+          status: 'delivered'
+        }
+      ]);
+    });
+  }, [sync]);
 
   // Haversine distance
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
@@ -71,10 +107,10 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     e.preventDefault();
     if (!inputText.trim()) return;
 
-    const userMsgId = Date.now().toString();
+    const userMsgId = nextMessageId();
     const newMessage: Message = {
       id: userMsgId,
-      sender: nameA || 'User A',
+      sender: ownName,
       text: inputText,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       status: 'sending'
@@ -83,9 +119,17 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     setMessages(prev => [...prev, newMessage]);
     setInputText('');
 
+    // Send to the real second tab when one is connected.
+    sync?.sendChat({
+      id: userMsgId,
+      sender: ownName,
+      text: inputText,
+      timestamp: newMessage.timestamp
+    });
+
     // Trigger Transit routing animation simulation
     setRoutingStatus('Routing...');
-    
+
     // Step 1: Simulated ocean crossing
     setTimeout(() => {
       setMessages(prev =>
@@ -100,25 +144,36 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         prev.map(m => (m.id === userMsgId ? { ...m, status: 'delivered' } : m))
       );
       setRoutingStatus(null);
-      
-      // Step 3: Trigger automatic partner reply
-      simulatePartnerReply();
+
+      // Step 3: Auto partner reply is only the offline fallback — a real
+      // second tab answers for itself over the channel.
+      if (!hasPeer) simulatePartnerReply();
     }, 1500);
   };
 
   // Automatic contextual reply based on timezone status
   const simulatePartnerReply = () => {
     setTimeout(() => {
-      // Determine partner local hour
-      const formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone: cityB.timezone,
-        hour: 'numeric',
-        hour12: false
-      });
-      const partnerHour = parseInt(formatter.format(new Date()), 10);
-      
+      // Determine partner local hour (defensive: an invalid zone must not break the reply)
+      const partnerHour = (() => {
+        try {
+          return parseInt(
+            new Intl.DateTimeFormat('en-US', { timeZone: cityB.timezone, hour: 'numeric', hour12: false }).format(new Date()),
+            10
+          );
+        } catch {
+          return -1;
+        }
+      })();
+
       let replyText = '';
-      if (partnerHour >= 23 || partnerHour < 7) {
+      if (partnerHour === -1) {
+        const replies = [
+          `Hey! Got your message across the ${distance.toFixed(0)} km bridge. That traveled fast!`,
+          `Connected across ${distance.toFixed(0)} km! Pretty cool interface, isn't it?`
+        ];
+        replyText = replies[Math.floor(Math.random() * replies.length)];
+      } else if (partnerHour >= 23 || partnerHour < 7) {
         const replies = [
           `😴 Zzz... My phone is in Sleep Focus Mode in ${cityB.name}. Talk to you when it's morning!`,
           `Sleeping now! This was sent as an auto-queued message across the ${distance.toFixed(0)} km bridge.`
@@ -142,8 +197,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       setMessages(prev => [
         ...prev,
         {
-          id: (Date.now() + 1).toString(),
-          sender: nameB || 'User B',
+          id: nextMessageId(),
+          sender: peerName,
           text: replyText,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           status: 'delivered'
@@ -191,7 +246,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         }}
       >
         {messages.map((msg) => {
-          const isMe = msg.sender === (nameA || 'User A');
+          const isMe = msg.sender === ownName;
           return (
             <div
               key={msg.id}
@@ -277,10 +332,11 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
           type="text"
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
-          placeholder={`Message ${nameB || 'Partner'}...`}
+          placeholder={`Message ${peerName}...`}
+          aria-label={`Message ${peerName}`}
           style={{ flexGrow: 1 }}
         />
-        <button type="submit" className="btn btn-primary" style={{ padding: '0 16px' }}>
+        <button type="submit" className="btn btn-primary" style={{ padding: '0 16px' }} aria-label="Send message">
           <Send size={16} />
         </button>
       </form>

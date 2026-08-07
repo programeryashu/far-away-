@@ -1,27 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { MapPin, Search, Navigation } from 'lucide-react';
-
-export interface CityData {
-  name: string;
-  country: string;
-  lat: number;
-  lng: number;
-  timezone: string;
-}
-
-export const FALLBACK_CITIES: CityData[] = [
-  { name: 'San Francisco', country: 'United States', lat: 37.7749, lng: -122.4194, timezone: 'America/Los_Angeles' },
-  { name: 'Tokyo', country: 'Japan', lat: 35.6762, lng: 139.6503, timezone: 'Asia/Tokyo' },
-  { name: 'London', country: 'United Kingdom', lat: 51.5074, lng: -0.1278, timezone: 'Europe/London' },
-  { name: 'Mumbai', country: 'India', lat: 19.0760, lng: 72.8777, timezone: 'Asia/Kolkata' },
-  { name: 'Sydney', country: 'Australia', lat: -33.8688, lng: 151.2093, timezone: 'Australia/Sydney' },
-  { name: 'Paris', country: 'France', lat: 48.8566, lng: 2.3522, timezone: 'Europe/Paris' },
-  { name: 'New York', country: 'United States', lat: 40.7128, lng: -74.0060, timezone: 'America/New_York' },
-  { name: 'Berlin', country: 'Germany', lat: 52.5200, lng: 13.4050, timezone: 'Europe/Berlin' },
-  { name: 'Cairo', country: 'Egypt', lat: 30.0444, lng: 31.2357, timezone: 'Africa/Cairo' },
-  { name: 'Rio de Janeiro', country: 'Brazil', lat: -22.9068, lng: -43.1729, timezone: 'America/Sao_Paulo' },
-  { name: 'Cape Town', country: 'South Africa', lat: -33.9249, lng: 18.4241, timezone: 'Africa/Johannesburg' }
-];
+import { MapPin, Search, Navigation, Locate } from 'lucide-react';
+import {
+  FALLBACK_CITIES,
+  guessTimezoneFromCoords,
+  nominatimToCityData,
+  type CityData,
+  type NominatimResult
+} from '../lib/cities';
 
 interface LocationSelectorProps {
   label: string;
@@ -41,109 +26,131 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
   colorTheme
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [suggestions, setSuggestions] = useState<CityData[]>([]);
+  const [apiResults, setApiResults] = useState<CityData[]>([]);
   const [loading, setLoading] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [geoError, setGeoError] = useState<string | null>(null);
 
-  // Auto-search fallback cities locally
+  // Debounced Nominatim fetch (setState only inside async callbacks)
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSuggestions(FALLBACK_CITIES.slice(0, 5));
-      return;
-    }
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < 3) return;
 
-    const localMatches = FALLBACK_CITIES.filter(c =>
-      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.country.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-
-    if (searchQuery.length >= 3) {
-      const delayDebounce = setTimeout(async () => {
-        setLoading(true);
-        try {
-          // Attempt Nominatim fetch
-          const res = await fetch(
-            `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(
-              searchQuery
-            )}&limit=5`,
-            {
-              headers: {
-                'Accept-Language': 'en'
-              }
+    let cancelled = false;
+    const delayDebounce = setTimeout(async () => {
+      if (cancelled) return;
+      setLoading(true);
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(
+            trimmed
+          )}&limit=5`,
+          {
+            headers: {
+              'Accept-Language': 'en'
             }
-          );
-          if (res.ok) {
-            const data = await res.json();
-            const apiCities: CityData[] = data.map((item: any) => {
-              // Try to map to standard TZ by coordinate approximations or simple rules
-              // If not found, we use simple timezone logic
-              const lat = parseFloat(item.lat);
-              const lng = parseFloat(item.lon);
-              
-              // Approximate timezone name based on longitude for lookup if API fails
-              const timezone = guessTimezoneFromCoords(lat, lng);
-              const cityName = item.address.city || item.address.town || item.address.suburb || item.display_name.split(',')[0];
-              const countryName = item.address.country || '';
-
-              return {
-                name: cityName,
-                country: countryName,
-                lat,
-                lng,
-                timezone
-              };
-            });
-            
-            // Combine with local matches
-            setSuggestions([...apiCities, ...localMatches].filter(
-              (city, idx, self) => self.findIndex(c => c.name === city.name && c.country === city.country) === idx
-            ));
-          } else {
-            setSuggestions(localMatches);
           }
-        } catch (error) {
-          console.error("Nominatim search failed, using fallback:", error);
-          setSuggestions(localMatches);
-        } finally {
-          setLoading(false);
-        }
-      }, 500);
+        );
+        if (!res.ok) throw new Error(`Nominatim search failed: ${res.status}`);
+        const data = (await res.json()) as NominatimResult[];
+        if (!cancelled) setApiResults(data.map(item => nominatimToCityData(item)));
+      } catch (error) {
+        console.error('Nominatim search failed, using fallback:', error);
+        if (!cancelled) setApiResults([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 500);
 
-      return () => clearTimeout(delayDebounce);
-    } else {
-      setSuggestions(localMatches);
-    }
+    return () => {
+      cancelled = true;
+      clearTimeout(delayDebounce);
+      // A cancelled in-flight fetch would otherwise never reset `loading`
+      setLoading(false);
+    };
   }, [searchQuery]);
 
-  // Simple coordinate approximation for standard IANA Timezones
-  const guessTimezoneFromCoords = (lat: number, lng: number): string => {
-    // Basic approximate mapping
-    if (lng > 60 && lng < 95 && lat > 5 && lat < 35) return 'Asia/Kolkata'; // India
-    if (lng > 120 && lng < 150 && lat > 20 && lat < 50) return 'Asia/Tokyo'; // Japan
-    if (lng > 110 && lng < 125 && lat > -40 && lat < -10) return 'Australia/Perth';
-    if (lng > 135 && lng < 155 && lat > -45 && lat < -10) return 'Australia/Sydney';
-    if (lng > -125 && lng < -114 && lat > 32 && lat < 49) return 'America/Los_Angeles';
-    if (lng > -80 && lng < -65 && lat > 35 && lat < 48) return 'America/New_York';
-    if (lng > -98 && lng < -80 && lat > 25 && lat < 49) return 'America/Chicago';
-    if (lng > -10 && lng < 2 && lat > 50 && lat < 60) return 'Europe/London';
-    if (lng > 2 && lng < 8 && lat > 42 && lat < 51) return 'Europe/Paris';
-    if (lng > 8 && lng < 16 && lat > 47 && lat < 55) return 'Europe/Berlin';
-    if (lng > 25 && lng < 35 && lat > 28 && lat < 32) return 'Africa/Cairo';
-    if (lng > -48 && lng < -38 && lat > -25 && lat < -15) return 'America/Sao_Paulo';
-    
-    // Very simple fallback: group by offset hours
-    const offset = Math.round(lng / 15);
-    // Format timezone as Etc/GMT-x or Etc/GMT+x (Note: POSIX timezone signs are inverted in Etc/GMT names!)
-    const gmtOffset = -offset;
-    const gmtSign = gmtOffset >= 0 ? '+' : '';
-    return `Etc/GMT${gmtSign}${gmtOffset}`;
-  };
+  // Suggestions are derived during render from apiResults + local fallback matches
+  const trimmed = searchQuery.trim();
+  const localMatches = trimmed
+    ? FALLBACK_CITIES.filter(
+        c =>
+          c.name.toLowerCase().includes(trimmed.toLowerCase()) ||
+          c.country.toLowerCase().includes(trimmed.toLowerCase())
+      )
+    : FALLBACK_CITIES.slice(0, 5);
+  const effectiveApi = trimmed.length >= 3 ? apiResults : [];
+  const suggestions = [...effectiveApi, ...localMatches].filter(
+    (city, idx, self) => self.findIndex(c => c.name === city.name && c.country === city.country) === idx
+  );
 
   const handleSelect = (city: CityData) => {
     onCitySelect(city);
     setSearchQuery('');
     setShowDropdown(false);
   };
+
+  const geoSupported = typeof navigator !== 'undefined' && 'geolocation' in navigator;
+
+  const handleUseMyLocation = () => {
+    setGeoError(null);
+    if (!geoSupported) {
+      setGeoError('Geolocation is not supported by this browser.');
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}`,
+            {
+              headers: {
+                'Accept-Language': 'en'
+              }
+            }
+          );
+          if (!res.ok) throw new Error(`Reverse geocode failed: ${res.status}`);
+          const data = (await res.json()) as NominatimResult;
+          const city = nominatimToCityData(data, latitude, longitude);
+          onCitySelect(city);
+          setSearchQuery('');
+          setShowDropdown(false);
+        } catch (error) {
+          console.error('Reverse geocoding failed:', error);
+          // Fall back to a coordinate-derived city so geolocation still works
+          // when Nominatim is down or rate-limited during a live demo.
+          const fallbackCity: CityData = {
+            name: `${Math.abs(latitude).toFixed(2)}°${latitude >= 0 ? 'N' : 'S'}, ${Math.abs(longitude).toFixed(2)}°${longitude >= 0 ? 'E' : 'W'}`,
+            country: '',
+            lat: latitude,
+            lng: longitude,
+            timezone: guessTimezoneFromCoords(latitude, longitude)
+          };
+          onCitySelect(fallbackCity);
+          setSearchQuery('');
+          setShowDropdown(false);
+          setGeoError('Could not look up a city name — using your coordinates.');
+        } finally {
+          setLocating(false);
+        }
+      },
+      (error) => {
+        setLocating(false);
+        let message = 'Could not determine your location.';
+        if (error.code === error.PERMISSION_DENIED) message = 'Location permission denied.';
+        else if (error.code === error.POSITION_UNAVAILABLE) message = 'Location signal unavailable.';
+        else if (error.code === error.TIMEOUT) message = 'Location request timed out.';
+        setGeoError(message);
+      },
+      { timeout: 10000 }
+    );
+  };
+
+  const latDirection = selectedCity.lat >= 0 ? 'N' : 'S';
+  const lngDirection = selectedCity.lng >= 0 ? 'E' : 'W';
 
   return (
     <div className="glass-panel" style={{ position: 'relative' }}>
@@ -170,7 +177,22 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
         </div>
 
         <div style={{ position: 'relative' }}>
-          <label htmlFor={`search-${label}`}>Location (City)</label>
+          <div className="flex-between" style={{ marginBottom: '6px' }}>
+            <label htmlFor={`search-${label}`} style={{ marginBottom: 0 }}>
+              Location (City)
+            </label>
+            <button
+              type="button"
+              onClick={handleUseMyLocation}
+              disabled={!geoSupported || locating}
+              className="btn btn-outline"
+              style={{ padding: '5px 10px', fontSize: '11px', borderRadius: 'var(--radius-sm)', gap: '6px' }}
+              aria-label="Use my current location"
+            >
+              <Locate size={12} color={locating ? 'var(--primary)' : 'var(--text-secondary)'} />
+              {locating ? 'Locating...' : 'Use my location'}
+            </button>
+          </div>
           <div style={{ position: 'relative' }}>
             <input
               id={`search-${label}`}
@@ -193,6 +215,12 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
               }}
             />
           </div>
+
+          {geoError && (
+            <div style={{ marginTop: '6px', fontSize: '12px', color: '#f87171' }}>
+              {geoError}
+            </div>
+          )}
 
           {showDropdown && (
             <ul
@@ -265,7 +293,7 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
           <div>
             <span style={{ color: 'var(--text-muted)' }}>Coordinates: </span>
             <span style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>
-              {selectedCity.lat.toFixed(4)}°N, {selectedCity.lng.toFixed(4)}°E
+              {Math.abs(selectedCity.lat).toFixed(4)}°{latDirection}, {Math.abs(selectedCity.lng).toFixed(4)}°{lngDirection}
             </span>
           </div>
         </div>

@@ -1,9 +1,14 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Sparkles, Video, Paintbrush, Coffee, Play, Pause, RotateCcw, X, Users } from 'lucide-react';
+import type { OrbitSync } from '../lib/broadcast';
 
 interface ActivityFinderProps {
   nameA: string;
   nameB: string;
+  /** Live-tab sync channel; null when BroadcastChannel is unavailable. */
+  sync: OrbitSync | null;
+  /** True when a second tab is connected right now. */
+  hasPeer: boolean;
 }
 
 interface Activity {
@@ -15,22 +20,269 @@ interface Activity {
   suitability: 'High' | 'Medium' | 'Low';
 }
 
+interface Point {
+  x: number;
+  y: number;
+}
+
+interface Stroke {
+  points: Point[];
+  color: string;
+}
+
+const FOCUS_SECONDS = 25 * 60;
+const USER_COLOR = 'rgba(99, 102, 241, 0.8)';
+const PARTNER_COLOR = 'rgba(236, 72, 153, 0.8)';
+
+const formatTime = (totalSeconds: number) => {
+  const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+  const seconds = Math.floor(totalSeconds % 60).toString().padStart(2, '0');
+  return `${minutes}:${seconds}`;
+};
+
+const drawStroke = (ctx: CanvasRenderingContext2D, stroke: Stroke) => {
+  if (stroke.points.length === 0) return;
+  ctx.beginPath();
+  ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+  for (let i = 1; i < stroke.points.length; i++) {
+    ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+  }
+  ctx.strokeStyle = stroke.color;
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+};
+
+const sampleBezier = (p0: Point, p1: Point, p2: Point, p3: Point, steps = 24): Point[] => {
+  const points: Point[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const mt = 1 - t;
+    points.push({
+      x: mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x,
+      y: mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y
+    });
+  }
+  return points;
+};
+
+// Build the partner heart as two strokes so it replays correctly after resize
+const buildHeartStrokes = (cx: number, cy: number): Stroke[] => {
+  const left = sampleBezier({ x: cx, y: cy }, { x: cx - 20, y: cy - 20 }, { x: cx - 40, y: cy + 10 }, { x: cx, y: cy + 40 });
+  const right = sampleBezier({ x: cx, y: cy }, { x: cx + 20, y: cy - 20 }, { x: cx + 40, y: cy + 10 }, { x: cx, y: cy + 40 });
+  return [
+    { points: left, color: PARTNER_COLOR },
+    { points: right, color: PARTNER_COLOR }
+  ];
+};
+
 export const ActivityFinder: React.FC<ActivityFinderProps> = ({
   nameA,
-  nameB
+  nameB,
+  sync,
+  hasPeer
 }) => {
   const [activeModal, setActiveModal] = useState<string | null>(null);
+
+  // Host tab = User A (indigo), remote tab = User B (pink). This drives both
+  // whose strokes are "mine" and which names appear in the shared logs.
+  const ownSide = sync?.side ?? 'host';
+  const ownName = ownSide === 'host' ? nameA || 'User A' : nameB || 'User B';
+  const peerName = ownSide === 'host' ? nameB || 'User B' : nameA || 'User A';
+  const myColor = ownSide === 'host' ? USER_COLOR : PARTNER_COLOR;
+  const peerColor = ownSide === 'host' ? PARTNER_COLOR : USER_COLOR;
+
+  // Names can change; keep a live copy the channel handler can read without
+  // re-subscribing on every keystroke. Refreshed in an effect (never during
+  // render) so the handler always sees the latest names/colors.
+  const liveRef = useRef({ peerName, peerColor });
+  useEffect(() => {
+    liveRef.current = { peerName, peerColor };
+  }, [peerName, peerColor]);
 
   // SynchroCinema State
   const [isPlaying, setIsPlaying] = useState(false);
   const [syncStatus, setSyncStatus] = useState('Synced');
   const [cinemaLogs, setCinemaLogs] = useState<string[]>(['Session initialized']);
-  
+
+  // Deep Space Coffee Timer State
+  const [secondsLeft, setSecondsLeft] = useState(FOCUS_SECONDS);
+  const [isRunning, setIsRunning] = useState(false);
+  const [sessionLogs, setSessionLogs] = useState<string[]>([]);
+  const endAtRef = useRef<number>(0);
+
   // Canvas State
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [canvasLogs, setCanvasLogs] = useState<string[]>([]);
   const [partnerDrawing, setPartnerDrawing] = useState(false);
+  const strokesRef = useRef<Stroke[]>([]);
+  const currentStrokeRef = useRef<Stroke | null>(null);
+  const partnerDrawTimerRef = useRef<number | null>(null);
+  const cinemaTimerRef = useRef<number | null>(null);
+
+  // Pomodoro countdown anchored to the wall clock, so background-tab throttling
+  // of setInterval can't make the shared timer drift. Uses new Date().getTime()
+  // (not Date.now()) to satisfy react-compiler purity rules; all setState happens
+  // inside the async interval callback.
+  useEffect(() => {
+    if (!isRunning) return;
+    const interval = window.setInterval(() => {
+      const remaining = Math.max(0, Math.round((endAtRef.current - new Date().getTime()) / 1000));
+      setSecondsLeft(remaining);
+      if (remaining <= 0) {
+        setIsRunning(false);
+        setSessionLogs(prev => ['Session complete — take a break! ☕', ...prev]);
+      }
+    }, 250);
+    return () => window.clearInterval(interval);
+  }, [isRunning]);
+
+  const handleStartTimer = () => {
+    const now = new Date().getTime();
+    endAtRef.current = now + (secondsLeft <= 0 ? FOCUS_SECONDS : secondsLeft) * 1000;
+    setSecondsLeft(Math.max(0, Math.round((endAtRef.current - now) / 1000)));
+    setIsRunning(true);
+  };
+
+  const handlePauseTimer = () => {
+    const remaining = Math.max(0, Math.round((endAtRef.current - new Date().getTime()) / 1000));
+    setSecondsLeft(remaining);
+    setIsRunning(false);
+  };
+
+  const handleResetTimer = () => {
+    setIsRunning(false);
+    endAtRef.current = 0;
+    setSecondsLeft(FOCUS_SECONDS);
+  };
+
+  // ------------------------------------
+  // Cinema Simulation logic
+  // ------------------------------------
+  const handleCinemaToggle = () => {
+    const nextState = !isPlaying;
+    setIsPlaying(nextState);
+    setSyncStatus('Syncing...');
+
+    // Add user action log
+    const userLog = `${ownName} ${nextState ? 'pressed PLAY' : 'pressed PAUSE'}`;
+    setCinemaLogs(prev => [userLog, ...prev]);
+
+    // A real second tab mirrors the toggle over the channel; the simulated
+    // acknowledgment is only the offline fallback.
+    sync?.sendCinema(nextState);
+
+    cinemaTimerRef.current = window.setTimeout(() => {
+      setSyncStatus('Synced');
+      if (!hasPeer) {
+        const partnerLog = `${peerName} synced to playback at 02:45`;
+        setCinemaLogs(prev => [partnerLog, ...prev]);
+      }
+    }, 1000);
+  };
+
+  // ------------------------------------
+  // Canvas Drawing logic (DPR-aware)
+  // ------------------------------------
+  const getCanvasPoint = (e: React.MouseEvent<HTMLCanvasElement>): Point | null => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  const redrawAll = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    // Work in CSS pixel coordinates; the transform maps them to physical pixels
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+    strokesRef.current.forEach(stroke => drawStroke(ctx, stroke));
+    // Replay the in-progress stroke too, so a resize mid-drag doesn't wipe it
+    const current = currentStrokeRef.current;
+    if (current && current.points.length > 0) drawStroke(ctx, current);
+  }, []);
+
+  // Size the canvas bitmap to match its rendered CSS box on mount + resize
+  useEffect(() => {
+    if (activeModal !== 'canvas') return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    redrawAll();
+    const observer = new ResizeObserver(redrawAll);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [activeModal, redrawAll]);
+
+  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const point = getCanvasPoint(e);
+    if (!point) return;
+
+    currentStrokeRef.current = { points: [point], color: myColor };
+    ctx.beginPath();
+    ctx.moveTo(point.x, point.y);
+    ctx.strokeStyle = myColor;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    setIsDrawing(true);
+  };
+
+  const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDrawing) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const point = getCanvasPoint(e);
+    if (!point) return;
+
+    currentStrokeRef.current?.points.push(point);
+    ctx.lineTo(point.x, point.y);
+    ctx.strokeStyle = myColor;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  };
+
+  const stopDrawing = () => {
+    if (!isDrawing) return;
+    setIsDrawing(false);
+    const stroke = currentStrokeRef.current;
+    currentStrokeRef.current = null;
+    if (stroke && stroke.points.length > 0) {
+      strokesRef.current = [...strokesRef.current, stroke];
+    }
+
+    // Trigger simulated partner drawing after 1.5s
+    if (canvasLogs.length === 0) {
+      setPartnerDrawing(true);
+      setCanvasLogs(prev => [`${nameB || 'User B'} is drawing back...`, ...prev]);
+
+      partnerDrawTimerRef.current = window.setTimeout(() => {
+        strokesRef.current = [...strokesRef.current, ...buildHeartStrokes(250, 100)];
+        redrawAll();
+        setPartnerDrawing(false);
+        setCanvasLogs(prev => [`${nameB || 'User B'} drew a glowing heart! ❤️`, ...prev]);
+      }, 1500);
+    }
+  };
+
+  const clearCanvas = () => {
+    strokesRef.current = [];
+    setCanvasLogs([]);
+    redrawAll();
+  };
 
   // Activity list
   const activities: Activity[] = [
@@ -60,106 +312,8 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
     }
   ];
 
-  // ------------------------------------
-  // Cinema Simulation logic
-  // ------------------------------------
-  const handleCinemaToggle = () => {
-    const nextState = !isPlaying;
-    setIsPlaying(nextState);
-    setSyncStatus('Syncing...');
-    
-    // Add user action log
-    const userLog = `${nameA || 'User A'} ${nextState ? 'pressed PLAY' : 'pressed PAUSE'}`;
-    setCinemaLogs(prev => [userLog, ...prev]);
-
-    setTimeout(() => {
-      setSyncStatus('Synced');
-      // Simulate remote sync acknowledgment
-      const partnerName = nameB || 'User B';
-      const partnerLog = `${partnerName} synced to playback at 02:45`;
-      setCinemaLogs(prev => [partnerLog, ...prev]);
-    }, 1000);
-  };
-
-  // ------------------------------------
-  // Canvas Drawing logic
-  // ------------------------------------
-  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    const rect = canvas.getBoundingClientRect();
-    ctx.beginPath();
-    ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
-    setIsDrawing(true);
-  };
-
-  const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const rect = canvas.getBoundingClientRect();
-    ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
-    ctx.strokeStyle = 'rgba(99, 102, 241, 0.8)';
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    ctx.stroke();
-  };
-
-  const stopDrawing = () => {
-    if (!isDrawing) return;
-    setIsDrawing(false);
-    
-    // Trigger simulated partner drawing after 1.5s
-    if (canvasLogs.length === 0) {
-      setPartnerDrawing(true);
-      setCanvasLogs(prev => [`${nameB || 'User B'} is drawing back...`, ...prev]);
-      
-      setTimeout(() => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-
-        // Auto draw a small glowing star or heart
-        ctx.beginPath();
-        ctx.strokeStyle = 'rgba(236, 72, 153, 0.8)';
-        ctx.lineWidth = 3;
-        ctx.lineCap = 'round';
-        
-        // Draw a heart
-        const startX = 250;
-        const startY = 100;
-        ctx.moveTo(startX, startY);
-        // Left curve
-        ctx.bezierCurveTo(startX - 20, startY - 20, startX - 40, startY + 10, startX, startY + 40);
-        // Right curve
-        ctx.moveTo(startX, startY);
-        ctx.bezierCurveTo(startX + 20, startY - 20, startX + 40, startY + 10, startX, startY + 40);
-        ctx.stroke();
-
-        setPartnerDrawing(false);
-        setCanvasLogs(prev => [`${nameB || 'User B'} drew a glowing heart! ❤️`, ...prev]);
-      }, 1500);
-    }
-  };
-
-  const clearCanvas = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    setCanvasLogs([]);
-  };
-
   return (
-    <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+    <div id="activity-center" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <h2 style={{ fontSize: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
         <Sparkles size={22} color="var(--secondary)" />
         Synchronized Shared Experiences
@@ -248,6 +402,7 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
               </h3>
               <button
                 onClick={() => {
+                  if (cinemaTimerRef.current !== null) window.clearTimeout(cinemaTimerRef.current);
                   setActiveModal(null);
                   setIsPlaying(false);
                 }}
@@ -307,7 +462,7 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                   NOW STREAMING
                 </span>
                 <h4 style={{ fontSize: '18px', marginBottom: '16px' }}>Exploring the Far Reaches (Trailer)</h4>
-                
+
                 <button
                   onClick={handleCinemaToggle}
                   className="btn btn-primary"
@@ -413,7 +568,10 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                 Galactic Canvas Collaboration
               </h3>
               <button
-                onClick={() => setActiveModal(null)}
+                onClick={() => {
+                  if (partnerDrawTimerRef.current !== null) window.clearTimeout(partnerDrawTimerRef.current);
+                  setActiveModal(null);
+                }}
                 style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
               >
                 <X size={20} />
@@ -424,8 +582,6 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
             <div style={{ position: 'relative' }}>
               <canvas
                 ref={canvasRef}
-                width={500}
-                height={260}
                 onMouseDown={startDrawing}
                 onMouseMove={draw}
                 onMouseUp={stopDrawing}
@@ -440,7 +596,7 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                   display: 'block'
                 }}
               />
-              
+
               {partnerDrawing && (
                 <div
                   style={{
@@ -546,7 +702,7 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
 
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
               <div style={{ fontSize: '48px', fontWeight: 800, fontFamily: 'monospace', letterSpacing: '0.05em' }}>
-                25:00
+                {formatTime(secondsLeft)}
               </div>
               <span style={{ fontSize: '13px', color: 'var(--text-muted)', display: 'block', marginTop: '6px' }}>
                 SHARED POMODORO SESSION
@@ -565,13 +721,63 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
               </div>
             </div>
 
-            <button
-              onClick={() => alert("Simulation note: Timer started for both users! Stays in sync via local browser ticks.")}
-              className="btn btn-primary"
-              style={{ width: '100%' }}
-            >
-              Start Shared Timer
-            </button>
+            {/* Timer controls */}
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={handleStartTimer}
+                disabled={isRunning}
+                className="btn btn-primary"
+                style={{ flex: 1, padding: '10px 16px', fontSize: '13px' }}
+              >
+                <Play size={14} /> Start
+              </button>
+              <button
+                onClick={handlePauseTimer}
+                disabled={!isRunning}
+                className="btn btn-outline"
+                style={{ flex: 1, padding: '10px 16px', fontSize: '13px' }}
+              >
+                <Pause size={14} /> Pause
+              </button>
+              <button
+                onClick={handleResetTimer}
+                className="btn btn-outline"
+                style={{ flex: 1, padding: '10px 16px', fontSize: '13px' }}
+              >
+                <RotateCcw size={14} /> Reset
+              </button>
+            </div>
+
+            {/* Session log */}
+            <div>
+              <label>Session Log</label>
+              <div
+                style={{
+                  background: 'rgba(0,0,0,0.3)',
+                  border: '1px solid var(--border-glass)',
+                  borderRadius: 'var(--radius-sm)',
+                  minHeight: '48px',
+                  maxHeight: '96px',
+                  overflowY: 'auto',
+                  padding: '8px 12px',
+                  fontFamily: 'monospace',
+                  fontSize: '12px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px'
+                }}
+              >
+                {sessionLogs.length > 0 ? (
+                  sessionLogs.map((log, idx) => (
+                    <div key={idx} style={{ color: idx === 0 ? 'var(--accent)' : 'var(--text-muted)' }}>
+                      &gt; {log}
+                    </div>
+                  ))
+                ) : (
+                  <span style={{ color: 'var(--text-muted)' }}>&gt; No sessions completed yet.</span>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

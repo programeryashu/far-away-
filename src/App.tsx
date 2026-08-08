@@ -190,10 +190,10 @@ function App() {
                   letterSpacing: '-0.02em'
                 }}
               >
-                Far Away Connection Hub
+                Orbit
               </h1>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                Bridging space & time across orbits
+                Live time is the only time. Make the most of it.
               </p>
             </div>
           </div>
@@ -233,10 +233,10 @@ function App() {
           }}
         >
           <h2 style={{ fontSize: '32px', fontWeight: 800, letterSpacing: '-0.03em', marginBottom: '12px' }}>
-            How Far Is <span style={{ color: 'var(--primary)' }}>Far Away</span>?
+            Distance is not a place. It's a <span style={{ color: 'var(--primary)' }}>clock</span>.
           </h2>
           <p style={{ maxWidth: '600px', margin: '0 auto', fontSize: '15px' }}>
-            Enter your locations below to compute distances, synchronize local day timelines, chat with low-latency route trace, and run synchronized video & sketch session mockups.
+            Orbit turns the delay, the distance, and the timezone between two people into a live, measurable window — and helps you spend it together before it ends.
           </p>
         </section>
 
@@ -331,9 +331,9 @@ function App() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-          <span>Far Away Connection Hub</span>
+          <span>Orbit</span>
           <span>•</span>
-          <span>Hackathon MVP</span>
+          <span>Round 2 Transformation</span>
           <span>•</span>
           <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
             Made with <Heart size={12} color="var(--secondary)" /> for Far Away

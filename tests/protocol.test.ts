@@ -10,8 +10,8 @@ describe("BaseEnvelopeSchema", () => {
   it("accepts a valid envelope", () => {
     const result = BaseEnvelopeSchema.safeParse({
       version: PROTOCOL_VERSION,
-      session: "session-1",
-      from: "user-a",
+      sessionId: "session-1",
+      peerId: "user-a",
       seq: 0,
       timestamp: 1_700_000_000_000,
       event: "ping",
@@ -22,8 +22,8 @@ describe("BaseEnvelopeSchema", () => {
   it("rejects an invalid version", () => {
     const result = BaseEnvelopeSchema.safeParse({
       version: "1",
-      session: "session-1",
-      from: "user-a",
+      sessionId: "session-1",
+      peerId: "user-a",
       seq: 0,
       timestamp: 1_700_000_000_000,
       event: "ping",
@@ -34,8 +34,8 @@ describe("BaseEnvelopeSchema", () => {
   it("rejects a negative sequence", () => {
     const result = BaseEnvelopeSchema.safeParse({
       version: PROTOCOL_VERSION,
-      session: "session-1",
-      from: "user-a",
+      sessionId: "session-1",
+      peerId: "user-a",
       seq: -1,
       timestamp: 1_700_000_000_000,
       event: "ping",
@@ -51,8 +51,8 @@ describe("BaseEnvelopeSchema", () => {
   it("accepts an unknown future event type", () => {
     const result = BaseEnvelopeSchema.safeParse({
       version: PROTOCOL_VERSION,
-      session: "session-1",
-      from: "user-a",
+      sessionId: "session-1",
+      peerId: "user-a",
       seq: 1,
       timestamp: 1_700_000_000_000,
       event: "feature.future.v99",
@@ -65,8 +65,8 @@ describe("makeEnvelope", () => {
   it("applies default values", () => {
     const envelope = makeEnvelope({ event: "ping" });
     expect(envelope.version).toBe(PROTOCOL_VERSION);
-    expect(envelope.session).toBe("");
-    expect(envelope.from).toBe("");
+    expect(envelope.sessionId).toBe("");
+    expect(envelope.peerId).toBe("");
     expect(envelope.seq).toBe(0);
     expect(typeof envelope.timestamp).toBe("number");
     expect(envelope.event).toBe("ping");
@@ -75,13 +75,13 @@ describe("makeEnvelope", () => {
   it("allows overrides", () => {
     const envelope = makeEnvelope({
       event: "chat",
-      session: "session-1",
-      from: "user-a",
+      sessionId: "session-1",
+      peerId: "user-a",
       seq: 7,
       timestamp: 123,
     });
-    expect(envelope.session).toBe("session-1");
-    expect(envelope.from).toBe("user-a");
+    expect(envelope.sessionId).toBe("session-1");
+    expect(envelope.peerId).toBe("user-a");
     expect(envelope.seq).toBe(7);
     expect(envelope.timestamp).toBe(123);
   });

@@ -4,11 +4,12 @@ export const PROTOCOL_VERSION = 1;
 
 export const BaseEnvelopeSchema = z.object({
   version: z.number(),
-  session: z.string(),
-  from: z.string(),
+  sessionId: z.string(),
+  peerId: z.string(),
   seq: z.number().int().nonnegative(),
   timestamp: z.number(),
   event: z.string(),
+  payload: z.unknown().optional(),
 });
 
 export type BaseEnvelope = z.infer<typeof BaseEnvelopeSchema>;
@@ -19,10 +20,11 @@ export function makeEnvelope(
 ): BaseEnvelope {
   return {
     version: PROTOCOL_VERSION,
-    session: "",
-    from: "",
+    sessionId: "",
+    peerId: "",
     seq: 0,
     timestamp: Date.now(),
+    payload: undefined,
     ...overrides,
   };
 }

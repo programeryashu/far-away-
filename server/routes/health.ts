@@ -17,7 +17,8 @@ export async function healthRoutes(fastify: FastifyInstance): Promise<void> {
       uptime: process.uptime(),
       database: dbStatus,
       activeSessions,
-      wsConnections: 0, // Placeholder
+      wsConnections: fastify.sessionHub.activeConnections,
     };
+
   });
 }

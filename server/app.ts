@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyCors from "@fastify/cors";
 import fastifyEnv from "@fastify/env";
@@ -7,13 +6,14 @@ import { z } from "zod";
 import { envSchema, type EnvConfig } from "./config.js";
 import { healthRoutes } from "./routes/health.js";
 import { sessionRoutes } from "./routes/sessions.js";
-import { parseEnvelope } from "../shared/protocol.js";
 import { Store } from "./db/store.js";
+import { SessionHub } from "./realtime/session-hub.js";
 
 declare module "fastify" {
   interface FastifyInstance {
     config: EnvConfig;
     store: Store;
+    sessionHub: SessionHub;
   }
 }
 
@@ -31,6 +31,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await fastify.register(fastifyEnv, { schema: envSchema });
   fastify.decorate("store", new Store(fastify.config.DATABASE_PATH));
+  fastify.decorate("sessionHub", new SessionHub(fastify));
 
   fastify.addHook("onClose", async (instance) => {
     instance.store.close();
@@ -47,37 +48,37 @@ export async function buildApp(): Promise<FastifyInstance> {
   await fastify.register(healthRoutes);
   await fastify.register(sessionRoutes);
 
-  fastify.get("/ws", { websocket: true }, (socket) => {
-    const connectionId = randomUUID();
-    fastify.log.info({ connectionId }, "websocket client connected");
+  fastify.get("/ws", { websocket: true }, (socket, request) => {
+    const { sessionId, peerId } = z
+      .object({
+        sessionId: z.string(),
+        peerId: z.string(),
+      })
+      .parse(request.query);
 
-    socket.on("message", (raw) => {
-      const text = raw.toString();
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        fastify.log.warn({ connectionId }, "websocket received malformed JSON");
-        socket.send(JSON.stringify({ error: "malformed JSON" }));
-        return;
-      }
+    const session = fastify.store.getSession(sessionId);
+    if (!session || session.status !== "active") {
+      socket.close(4000, "invalid session");
+      return;
+    }
 
-      const envelope = parseEnvelope(parsed);
-      if (!envelope) {
-        fastify.log.warn({ connectionId }, "websocket received invalid envelope");
-        socket.send(JSON.stringify({ error: "invalid envelope" }));
-        return;
-      }
+    const peer = fastify.store.getPeer(peerId);
+    if (!peer || peer.session_id !== sessionId) {
+      socket.close(4000, "invalid peer");
+      return;
+    }
 
-      fastify.log.debug(
-        { connectionId, event: envelope.event },
-        "websocket received valid envelope",
-      );
-    });
+    fastify.sessionHub.addConnection(sessionId, peerId, socket);
 
-    socket.on("close", () => {
-      fastify.log.info({ connectionId }, "websocket client disconnected");
-    });
+    socket.send(
+      JSON.stringify({
+        event: "connected",
+        payload: { sessionId, peerId, role: peer.role },
+      }),
+    );
+
+    const state = fastify.store.getSessionState(sessionId);
+    socket.send(JSON.stringify({ event: "state", payload: state }));
   });
 
   return fastify;

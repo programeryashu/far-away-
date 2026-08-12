@@ -11,10 +11,12 @@ node_modules
 dist
 dist-server
 dist-ssr
+data
 
 # Environment files
 .env
 .env.local
+data/
 
 # opencode
 .opencode/

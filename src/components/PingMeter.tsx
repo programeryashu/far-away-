@@ -1,14 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Zap, Activity } from 'lucide-react';
-import type { OrbitSync } from '../lib/broadcast';
-import type { SessionManager } from '../lib/session';
+import type { Connection } from '../lib/connection';
 
 interface PingMeterProps {
-  /** Live-tab sync channel; null when BroadcastChannel is unavailable. */
-  sync: OrbitSync | null;
-  /** Session Manager for backend-driven sessions */
-  sessionManager?: SessionManager | null;
-  /** True when a second tab is connected right now. */
+  /** Active transport (BroadcastChannel locally, WebSocket in a session). */
+  connection: Connection;
+  /** True when a second peer is connected right now. */
   hasPeer: boolean;
 }
 
@@ -17,63 +14,38 @@ type PingStatus = 'idle' | 'pinging' | 'measured';
 // How long we wait for a real pong before giving up on the in-flight ping.
 const PONG_TIMEOUT_MS = 2000;
 
-// Solo fallback: simulate a peer's pong so the demo still lights up.
-const SIM_MIN_MS = 25;
-const SIM_MAX_MS = 90;
-
-export const PingMeter: React.FC<PingMeterProps> = ({ sync, sessionManager, hasPeer }) => {
+export const PingMeter: React.FC<PingMeterProps> = ({ connection, hasPeer }) => {
   const [status, setStatus] = useState<PingStatus>('idle');
   const [latency, setLatency] = useState<number | null>(null);
   const [lastPingedAt, setLastPingedAt] = useState<number | null>(null);
 
   // Track the in-flight ping's timestamp so a pong can be matched to it (and
-  // stale pongs from earlier clicks are ignored).
+  // stale pongs from earlier clicks are ignored). The solo simulation is a
+  // transport concern now — the local connection answers its own pings — so
+  // this component only ever waits for a real pong envelope.
   const pendingTsRef = useRef<number | null>(null);
   const failTimerRef = useRef<number | null>(null);
-  const simTimerRef = useRef<number | null>(null);
 
-  // Peer's ping → answer it with a pong carrying the same timestamp so the
-  // peer can measure round-trip. Our own pong → match it against the last
-  // ping we sent and compute RTT.
+  // A pong from the connection (either transport) is matched against the
+  // last ping we sent by timestamp and turned into a measured round-trip.
   useEffect(() => {
-    if (sessionManager) {
-        return sessionManager.onEvent((env) => {
-            // The pong payload is schema-validated: ts is a number that the
-            // server echoed from our own ping, so only a matching in-flight
-            // timestamp counts as this measurement.
-            if (env.event === 'pong' && pendingTsRef.current !== null && env.payload.ts === pendingTsRef.current) {
-                if (failTimerRef.current !== null) window.clearTimeout(failTimerRef.current);
-                if (simTimerRef.current !== null) window.clearTimeout(simTimerRef.current);
-                failTimerRef.current = null;
-                simTimerRef.current = null;
-                pendingTsRef.current = null;
-                setLatency(Date.now() - env.payload.ts);
-                setStatus('measured');
-            }
-        });
-    }
-
-    if (!sync) return;
-    return sync.onMessage((msg) => {
-      if (msg.type === 'ping') {
-        sync.sendPong(msg.ts);
-      } else if (msg.type === 'pong' && pendingTsRef.current !== null && msg.ts === pendingTsRef.current) {
+    return connection.onEvent((env) => {
+      // The pong payload is schema-validated: ts is a number echoed from our
+      // own ping, so only a matching in-flight timestamp counts.
+      if (env.event === 'pong' && pendingTsRef.current !== null && env.payload.ts === pendingTsRef.current) {
         if (failTimerRef.current !== null) window.clearTimeout(failTimerRef.current);
-        if (simTimerRef.current !== null) window.clearTimeout(simTimerRef.current);
         failTimerRef.current = null;
-        simTimerRef.current = null;
         pendingTsRef.current = null;
-        setLatency(Date.now() - msg.ts);
+        setLatency(Date.now() - env.payload.ts);
         setStatus('measured');
       }
     });
-  }, [sync, sessionManager]);
+  }, [connection]);
 
   // Cleanup timers on unmount.
   useEffect(() => {
     return () => {
       if (failTimerRef.current !== null) window.clearTimeout(failTimerRef.current);
-      if (simTimerRef.current !== null) window.clearTimeout(simTimerRef.current);
     };
   }, []);
 
@@ -84,36 +56,16 @@ export const PingMeter: React.FC<PingMeterProps> = ({ sync, sessionManager, hasP
     setLatency(null);
     setLastPingedAt(ts);
 
-    if (sessionManager) {
-        sessionManager.send('ping', { ts });
-        failTimerRef.current = window.setTimeout(() => {
-          if (pendingTsRef.current === ts) {
-            pendingTsRef.current = null;
-            failTimerRef.current = null;
-            setStatus('idle');
-          }
-        }, PONG_TIMEOUT_MS);
-    } else if (sync && hasPeer) {
-      // Real round-trip across the BroadcastChannel.
-      sync.sendPing(ts);
-      failTimerRef.current = window.setTimeout(() => {
-        if (pendingTsRef.current === ts) {
-          pendingTsRef.current = null;
-          failTimerRef.current = null;
-          setStatus('idle');
-        }
-      }, PONG_TIMEOUT_MS);
-    } else {
-      // Offline fallback: emulate the peer's reply.
-      simTimerRef.current = window.setTimeout(() => {
-        if (pendingTsRef.current === ts) {
-          pendingTsRef.current = null;
-          simTimerRef.current = null;
-          setLatency(Math.round(4 + Math.random() * 20));
-          setStatus('measured');
-        }
-      }, SIM_MIN_MS + Math.random() * (SIM_MAX_MS - SIM_MIN_MS));
-    }
+    // The connection routes the ping: real WebSocket round-trip in a session,
+    // real BroadcastChannel round-trip to a local peer, simulated pong solo.
+    connection.send('ping', { ts });
+    failTimerRef.current = window.setTimeout(() => {
+      if (pendingTsRef.current === ts) {
+        pendingTsRef.current = null;
+        failTimerRef.current = null;
+        setStatus('idle');
+      }
+    }, PONG_TIMEOUT_MS);
   };
 
   const lightColor =
@@ -161,7 +113,7 @@ export const PingMeter: React.FC<PingMeterProps> = ({ sync, sessionManager, hasP
               Ping the Light
             </h2>
             <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-              {sessionManager
+              {connection.mode === 'remote'
                 ? 'real WebSocket round-trip'
                 : hasPeer
                   ? 'real BroadcastChannel round-trip'

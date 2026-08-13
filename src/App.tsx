@@ -10,10 +10,10 @@ import { Globe, Heart, Share2, Check, LogOut } from 'lucide-react';
 import { FALLBACK_CITIES, type CityData } from './lib/cities';
 import { buildShareUrl, isValidConnectionState, parseShareUrl, type ConnectionState } from './lib/share';
 import { OrbitSync } from './lib/broadcast';
-import { clearSession, loadSession, persistSession, SessionManager, type ClientSession } from './lib/session';
+import { clearSession, loadSession, persistSession, type ClientSession } from './lib/session';
+import { createConnection, type Connection } from './lib/connection';
 import { ApiError, createSession, joinSession, leaveSession } from './lib/api';
 import { identityFromParts, otherPeers, peerIdentity, type ServerPeer } from './lib/reconcile';
-import type { ConnectionStatus } from './lib/realtime';
 
 const STORAGE_KEY = 'faraway.connection';
 
@@ -110,18 +110,35 @@ function App() {
     return 'local';
   });
   const [sessionError, setSessionError] = useState<string | null>(null);
-  const [sm, setSm] = useState<SessionManager | null>(null);
-  const smRef = useRef<SessionManager | null>(null);
+  // A connection always exists: local (BroadcastChannel) by default, remote
+  // (WebSocket) while a server session is active. Session selection happens
+  // exactly here — createConnection(sync, session).
+  const [connection, setConnection] = useState<Connection>(() =>
+    createConnection(
+      sync,
+      persistedSession &&
+        (!urlSessionId || persistedSession.sessionId === urlSessionId)
+        ? persistedSession
+        : null
+    )
+  );
+  const connectionRef = useRef<Connection>(connection);
   useEffect(() => {
-    smRef.current = sm;
-  }, [sm]);
+    connectionRef.current = connection;
+  }, [connection]);
+  // The joined server session (remote only); local mode has none.
+  const [session, setSession] = useState<ClientSession | null>(() =>
+    persistedSession &&
+    (!urlSessionId || persistedSession.sessionId === urlSessionId)
+      ? persistedSession
+      : null
+  );
   // While an invite URL is open the role is unknown until the join response;
   // a stale persisted role from a different session must not apply.
   const [myRole, setMyRole] = useState<'a' | 'b' | null>(() => {
     if (urlSessionId) return null;
     return persistedSession?.role ?? null;
   });
-  const remotePeerIdsRef = useRef<Set<string>>(new Set());
 
   // Start the BroadcastChannel in every mode so local two-tab fallback works.
   useEffect(() => {
@@ -170,17 +187,19 @@ function App() {
   // this tab owns; the peerId used server-side comes from the authenticated
   // socket, so a peer can never edit the other side.
   const identityTimerRef = useRef<number | null>(null);
-  const pendingIdentityRef = useRef<{ role: 'a' | 'b'; name: string; city: CityData | null } | null>(null);
-  const scheduleIdentityPush = useCallback((role: 'a' | 'b', name: string, city: CityData | null) => {
+  const pendingIdentityRef = useRef<{ role: 'a' | 'b'; name: string; city: CityData } | null>(null);
+  const scheduleIdentityPush = useCallback((role: 'a' | 'b', name: string, city: CityData) => {
     pendingIdentityRef.current = { role, name, city };
     if (identityTimerRef.current !== null) window.clearTimeout(identityTimerRef.current);
     identityTimerRef.current = window.setTimeout(() => {
       identityTimerRef.current = null;
       const pending = pendingIdentityRef.current;
       if (!pending) return;
-      const manager = smRef.current;
-      if (!manager || manager.role !== pending.role) return;
-      manager.send('identity-update', {
+      // Identity is server-authoritative in a remote session; in local mode
+      // identities travel via the connection messages instead.
+      const conn = connectionRef.current;
+      if (!conn || conn.mode !== 'remote' || conn.role !== pending.role) return;
+      conn.send('identity-update', {
         displayName: pending.name || 'Peer',
         city: pending.city
       });
@@ -207,68 +226,71 @@ function App() {
     if (myRole === 'b') scheduleIdentityPush('b', userNameB, city);
   };
 
-  // Wire one SessionManager: status → UI state, events → presence/identity.
-  const attachManager = useCallback((manager: SessionManager) => {
-    manager.onStatusChange((status: ConnectionStatus) => {
-      if (status === 'connected') setSessionState('connected');
-      else if (status === 'reconnecting') setSessionState('reconnecting');
-      else if (status === 'disconnected') setSessionState('disconnected');
-      else if (status === 'error') {
-        setSessionState('error');
-        setSessionError(
-          'This session is no longer available — it may have expired. Leave it and start a new one.'
-        );
-      }
-    });
-
-    // Envelopes arrive already validated against the server union, so the
-    // payload of each event is fully typed — no casts, nothing to re-check.
-    manager.onEvent((env) => {
-      if (env.event === 'state') {
-        // State catch-up identifies the peer but does NOT set live presence:
-        // a peer that has joined (database membership) may not have its
-        // socket up. Presence is driven only by peer-joined/peer-left.
-        const others = otherPeers(env.payload.peers, manager.peerId);
-        for (const peer of others) applyPeerIdentity(peer);
-      } else if (env.event === 'peer-joined') {
-        // Never treat our own identity (a duplicate tab) as a remote peer.
-        if (env.payload.peerId !== manager.peerId) {
-          remotePeerIdsRef.current.add(env.payload.peerId);
-          setHasRemotePeer(true);
-          const otherRole = manager.role === 'a' ? 'b' : 'a';
-          const identity = identityFromParts(env.payload.displayName ?? '', env.payload.cityJson ?? '');
-          if (identity) applyIdentity(otherRole, identity);
-        }
-      } else if (env.event === 'peer-left') {
-        if (env.payload.peerId !== manager.peerId) {
-          remotePeerIdsRef.current.delete(env.payload.peerId);
-          setHasRemotePeer(remotePeerIdsRef.current.size > 0);
-        }
-      } else if (env.event === 'peer-updated') {
-        if (env.payload.peerId !== manager.peerId) {
-          const otherRole = manager.role === 'a' ? 'b' : 'a';
-          const identity = identityFromParts(env.payload.displayName ?? '', env.payload.cityJson ?? '');
-          if (identity) applyIdentity(otherRole, identity);
-        }
-      }
-    });
-
-    manager.start();
-    setSm(manager);
-    setMyRole(manager.role);
-  }, [applyIdentity, applyPeerIdentity]);
-
-  // Reconnect a persisted session: either there is no invite URL, or the invite
-  // URL points at the same session we already joined (reload of an invite
-  // link). A different invite is handled by the join panel instead.
+  // Wire the active connection once per connection change: status drives the
+  // session UI (remote only — local mode never leaves 'local'), peer presence
+  // stays distinct from connection status, and remote-peer identity comes from
+  // the state/peer-joined/peer-updated envelopes.
   useEffect(() => {
-    if (!persistedSession) return;
-    if (urlSessionId && persistedSession.sessionId !== urlSessionId) return;
-    const manager = new SessionManager(persistedSession);
-    attachManager(manager);
-    if (urlSessionId) window.history.replaceState(null, '', window.location.pathname);
-    return () => manager.stop();
-  }, [urlSessionId, persistedSession, attachManager]);
+    connectionRef.current = connection;
+
+    const unsubPeer = connection.onPeerChange((hasPeer) => setHasRemotePeer(hasPeer));
+
+    if (connection.mode === 'remote') {
+      const unsubStatus = connection.onStatus((status) => {
+        if (status === 'connected') setSessionState('connected');
+        else if (status === 'reconnecting') setSessionState('reconnecting');
+        else if (status === 'disconnected') setSessionState('disconnected');
+        else if (status === 'error') {
+          setSessionState('error');
+          setSessionError(
+            'This session is no longer available — it may have expired. Leave it and start a new one.'
+          );
+        }
+      });
+      const myPeerId = session?.peerId ?? '';
+      const unsubEvent = connection.onEvent((env) => {
+        if (env.event === 'state') {
+          // State catch-up identifies the peer but does NOT set live presence:
+          // a peer that has joined (database membership) may not have its
+          // socket up. Presence comes from the connection's peer events.
+          const others = otherPeers(env.payload.peers, myPeerId);
+          for (const peer of others) applyPeerIdentity(peer);
+        } else if (env.event === 'peer-joined') {
+          // Never treat our own identity (a duplicate tab) as a remote peer.
+          if (env.payload.peerId !== myPeerId) {
+            const identity = identityFromParts(env.payload.displayName ?? '', env.payload.cityJson ?? '');
+            if (identity) applyIdentity(connection.role === 'a' ? 'b' : 'a', identity);
+          }
+        } else if (env.event === 'peer-updated') {
+          if (env.payload.peerId !== myPeerId) {
+            const identity = identityFromParts(env.payload.displayName ?? '', env.payload.cityJson ?? '');
+            if (identity) applyIdentity(connection.role === 'a' ? 'b' : 'a', identity);
+          }
+        }
+      });
+      connection.start();
+      return () => {
+        unsubStatus();
+        unsubEvent();
+        unsubPeer();
+        connection.stop();
+      };
+    }
+
+    connection.start();
+    return () => {
+      unsubPeer();
+      connection.stop();
+    };
+  }, [connection, session, applyIdentity, applyPeerIdentity]);
+
+  // Strip the invite param after a reload that reconnects to the same
+  // persisted session, so the next reload reconnects instead of re-joining.
+  useEffect(() => {
+    if (urlSessionId && persistedSession?.sessionId === urlSessionId) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, [urlSessionId, persistedSession]);
 
   // Broadcast the full connection whenever either person's name or city
   // changes; a peer merges only its own side and ignores the rest.
@@ -315,9 +337,11 @@ function App() {
         setSessionState('joining');
         const { id } = await createSession();
         const res = await joinSession(id, userNameA || 'User A', selectedCityA);
-        const session: ClientSession = { sessionId: id, peerId: res.peerId, role: res.role };
-        persistSession(session);
-        attachManager(new SessionManager(session));
+        const newSession: ClientSession = { sessionId: id, peerId: res.peerId, role: res.role };
+        persistSession(newSession);
+        setMyRole(newSession.role);
+        setSession(newSession);
+        setConnection(createConnection(sync, newSession));
         await copyToClipboard(sessionShareUrl(id));
       } catch (err) {
         if (err instanceof ApiError && err.status === null) {
@@ -337,8 +361,7 @@ function App() {
       }
     } else {
       // Already in a session — re-share the same session link.
-      const existing = loadSession();
-      if (existing) await copyToClipboard(sessionShareUrl(existing.sessionId));
+      if (session) await copyToClipboard(sessionShareUrl(session.sessionId));
     }
   };
 
@@ -348,22 +371,23 @@ function App() {
     setSessionError(null);
     try {
       const res = await joinSession(urlSessionId, userNameB || 'User B', selectedCityB);
-      const session: ClientSession = { sessionId: urlSessionId, peerId: res.peerId, role: res.role };
-      persistSession(session);
+      const newSession: ClientSession = { sessionId: urlSessionId, peerId: res.peerId, role: res.role };
+      persistSession(newSession);
       // Strip the invite param so a reload reconnects via the persisted
       // session instead of re-joining (which would answer 409 session full).
       window.history.replaceState(null, '', window.location.pathname);
-      attachManager(new SessionManager(session));
+      setMyRole(newSession.role);
+      setSession(newSession);
+      setConnection(createConnection(sync, newSession));
     } catch (err) {
       setSessionState('error');
       setSessionError(friendlySessionError(err));
     }
   };
 
-  // Leave: stop the manager, close the WS, clear remote session state, return
-  // to local mode. Local names/cities and other app data are untouched.
+  // Leave: stop the remote connection, clear session state, return to local
+  // mode. Local names/cities and other app data are untouched.
   const handleLeave = async () => {
-    const session = loadSession();
     if (session) {
       try {
         await leaveSession(session.sessionId, session.peerId);
@@ -371,17 +395,18 @@ function App() {
         // Best effort — local cleanup proceeds regardless.
       }
     }
-    sm?.stop();
     if (identityTimerRef.current !== null) window.clearTimeout(identityTimerRef.current);
     identityTimerRef.current = null;
     pendingIdentityRef.current = null;
     clearSession();
-    setSm(null);
+    setSession(null);
     setMyRole(null);
     setHasRemotePeer(false);
-    remotePeerIdsRef.current.clear();
     setSessionError(null);
     setSessionState('local');
+    // Back to the BroadcastChannel transport; the wiring effect stops the
+    // old remote connection and starts this one.
+    setConnection(createConnection(sync, null));
     if (urlSessionId) window.history.replaceState(null, '', window.location.pathname);
   };
 
@@ -505,7 +530,7 @@ function App() {
       {/* Main dashboard body */}
       <main className="app-container">
         {/* Invitee join panel */}
-        {sessionState === 'joining' && urlSessionId && !sm && (
+        {sessionState === 'joining' && urlSessionId && connection.mode === 'local' && (
           <section className="glass-panel" style={{ borderColor: 'var(--border-glow)' }}>
             <h2 style={{ fontSize: '20px', marginBottom: '8px' }}>
               You've been invited to a live session
@@ -599,14 +624,13 @@ function App() {
             cityB={selectedCityB}
             nameA={userNameA}
             nameB={userNameB}
-            sync={sync}
             hasPeer={hasRemotePeer}
           />
         </section>
 
-        {/* Ping the light: measured round-trip (WebSocket in a session) */}
+        {/* Ping the light: measured round-trip over the active transport */}
         <section>
-          <PingMeter sync={sync} sessionManager={sm} hasPeer={hasRemotePeer} />
+          <PingMeter connection={connection} hasPeer={hasRemotePeer} />
         </section>
 
         {/* Time Zone Syncing & Overlaps */}
@@ -623,8 +647,7 @@ function App() {
             cityB={selectedCityB}
             nameA={userNameA}
             nameB={userNameB}
-            sync={sync}
-            sessionManager={sm}
+            connection={connection}
             hasPeer={hasRemotePeer}
           />
         </section>
@@ -639,13 +662,11 @@ function App() {
            * sessionId, so mid-session state is preserved.
            */}
           <ActivityFinder
-            key={sm?.sessionId ?? 'local'}
+            key={session?.sessionId ?? 'local'}
             nameA={userNameA}
             nameB={userNameB}
-            sync={sync}
-            sessionManager={sm}
+            connection={connection}
             hasPeer={hasRemotePeer}
-            remoteSession={sessionState !== 'local'}
           />
         </section>
       </main>

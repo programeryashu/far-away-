@@ -1,14 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { Clock, Radio, Sparkles } from 'lucide-react';
 import { computeLiveWindow, formatClock } from '../lib/time';
-import type { OrbitSync } from '../lib/broadcast';
 
 interface LiveWindowProps {
   cityA: { name: string; timezone: string };
   cityB: { name: string; timezone: string };
   nameA: string;
   nameB: string;
-  sync: OrbitSync | null;
   hasPeer: boolean;
 }
 

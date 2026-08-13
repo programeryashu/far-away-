@@ -1,26 +1,17 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Sparkles, Video, Paintbrush, Coffee, Play, Pause, RotateCcw, X, Users } from 'lucide-react';
-import type { OrbitSync, TimerPayload } from '../lib/broadcast';
-import type { SessionManager } from '../lib/session';
+import type { TimerPayload } from '../lib/broadcast';
+import type { Connection } from '../lib/connection';
 import { parseCanvasStrokes, parseTimerState } from '../lib/reconcile';
 import { CINEMA_EVENT, type CinemaPayload } from '../../shared/protocol';
 
 interface ActivityFinderProps {
   nameA: string;
   nameB: string;
-  /** Live-tab sync channel; null when BroadcastChannel is unavailable. */
-  sync: OrbitSync | null;
-  /** Session manager — when present, activities sync over the WebSocket. */
-  sessionManager?: SessionManager | null;
+  /** Active transport (BroadcastChannel locally, WebSocket in a session). */
+  connection: Connection;
   /** True when a second peer is connected right now. */
   hasPeer: boolean;
-  /**
-   * True while a remote session is active or being established. When true,
-   * activity actions must go over the WebSocket only — never the local
-   * BroadcastChannel — so a timer/canvas/cinema action is never silently
-   * misrouted to the local channel during the join window.
-   */
-  remoteSession: boolean;
 }
 
 interface Activity {
@@ -91,19 +82,15 @@ const buildHeartStrokes = (cx: number, cy: number): Stroke[] => {
 export const ActivityFinder: React.FC<ActivityFinderProps> = ({
   nameA,
   nameB,
-  sync,
-  sessionManager,
-  hasPeer,
-  remoteSession
+  connection,
+  hasPeer
 }) => {
   const [activeModal, setActiveModal] = useState<string | null>(null);
 
-  // Which side is "mine": in a session the role decides (A = indigo, B =
-  // pink); in local mode the BroadcastChannel side does. This drives whose
-  // strokes are "mine" and which names appear in the shared logs.
-  const ownIsA = sessionManager
-    ? sessionManager.role === 'a'
-    : (sync?.side ?? 'host') === 'host';
+  // Which side is "mine": the connection knows (tab side locally, server
+  // role in a session — A = indigo, B = pink). This drives whose strokes are
+  // "mine" and which names appear in the shared logs.
+  const ownIsA = connection.role === 'a';
   const ownName = ownIsA ? nameA || 'User A' : nameB || 'User B';
   const peerName = ownIsA ? nameB || 'User B' : nameA || 'User A';
   const myColor = ownIsA ? USER_COLOR : PARTNER_COLOR;
@@ -156,8 +143,7 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
   }, [isRunning]);
 
   const sendTimer = (payload: TimerPayload) => {
-    if (sessionManager) sessionManager.send('timer', payload);
-    else if (!remoteSession) sync?.sendTimer(payload);
+    connection.send('timer', payload);
   };
 
   const handleStartTimer = () => {
@@ -194,10 +180,8 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
     const userLog = `${ownName} ${nextState ? 'pressed PLAY' : 'pressed PAUSE'}`;
     setCinemaLogs(prev => [userLog, ...prev]);
 
-    // A real second tab mirrors the toggle over the active transport: the
-    // WebSocket in a remote session, the BroadcastChannel in local mode.
-    if (sessionManager) sessionManager.send(CINEMA_EVENT, { playing: nextState } satisfies CinemaPayload);
-    else if (!remoteSession) sync?.sendCinema(nextState);
+    // A real peer mirrors the toggle over the active transport.
+    connection.send(CINEMA_EVENT, { playing: nextState } satisfies CinemaPayload);
 
     cinemaTimerRef.current = window.setTimeout(() => {
       setSyncStatus('Synced');
@@ -260,58 +244,38 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
   // WebSocket; local two-tab mode over the BroadcastChannel. Both are
   // idempotent (canvas replaces/append strokes, never duplicates).
   useEffect(() => {
-    if (sessionManager) {
-      // Envelopes arrive already validated against the server union — every
-      // activity payload below is fully typed, so no casts are needed.
-      return sessionManager.onEvent((env) => {
-        if (env.event === 'canvas-stroke') {
-          strokesRef.current = [...strokesRef.current, env.payload];
-          redrawAll();
-        } else if (env.event === 'canvas-clear') {
-          strokesRef.current = [];
-          setCanvasLogs([]);
-          redrawAll();
-        } else if (env.event === 'timer') {
-          applyTimer(env.payload);
-        } else if (env.event === CINEMA_EVENT) {
-          setIsPlaying(env.payload.playing);
-          setSyncStatus('Synced');
-          setCinemaLogs((prev) => [
-            `${peerName} ${env.payload.playing ? 'pressed PLAY' : 'pressed PAUSE'}`,
-            ...prev
-          ]);
-        } else if (env.event === 'state') {
-          if (env.payload.canvas) {
-            const strokes = parseCanvasStrokes(env.payload.canvas);
-            if (strokes.length > 0 || strokesRef.current.length > 0) {
-              strokesRef.current = strokes as Stroke[];
-              redrawAll();
-            }
-          }
-          const timer = parseTimerState(env.payload.timer);
-          if (timer) applyTimer(timer);
-        }
-      });
-    }
-
-    if (!sync) return;
-    return sync.onMessage((msg) => {
-      if (msg.type === 'canvas-stroke') {
-        strokesRef.current = [...strokesRef.current, msg.payload];
+    // Both transports deliver the same typed envelopes, so this one handler
+    // covers local and remote activity sync.
+    return connection.onEvent((env) => {
+      if (env.event === 'canvas-stroke') {
+        strokesRef.current = [...strokesRef.current, env.payload];
         redrawAll();
-      } else if (msg.type === 'canvas-clear') {
+      } else if (env.event === 'canvas-clear') {
         strokesRef.current = [];
         setCanvasLogs([]);
         redrawAll();
-      } else if (msg.type === 'cinema') {
-        setIsPlaying(msg.playing);
+      } else if (env.event === 'timer') {
+        applyTimer(env.payload);
+      } else if (env.event === CINEMA_EVENT) {
+        setIsPlaying(env.payload.playing);
         setSyncStatus('Synced');
-        setCinemaLogs((prev) => [`${peerName} ${msg.playing ? 'pressed PLAY' : 'pressed PAUSE'}`, ...prev]);
-      } else if (msg.type === 'timer') {
-        applyTimer(msg.payload);
+        setCinemaLogs((prev) => [
+          `${peerName} ${env.payload.playing ? 'pressed PLAY' : 'pressed PAUSE'}`,
+          ...prev
+        ]);
+      } else if (env.event === 'state') {
+        if (env.payload.canvas) {
+          const strokes = parseCanvasStrokes(env.payload.canvas);
+          if (strokes.length > 0 || strokesRef.current.length > 0) {
+            strokesRef.current = strokes as Stroke[];
+            redrawAll();
+          }
+        }
+        const timer = parseTimerState(env.payload.timer);
+        if (timer) applyTimer(timer);
       }
     });
-  }, [sessionManager, sync, redrawAll, applyTimer, peerName]);
+  }, [connection, redrawAll, applyTimer, peerName]);
 
   // Size the canvas bitmap to match its rendered CSS box on mount + resize
   useEffect(() => {
@@ -366,13 +330,12 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
     if (stroke && stroke.points.length > 0) {
       strokesRef.current = [...strokesRef.current, stroke];
       // Ship the completed stroke to the real peer over the active transport.
-      if (sessionManager) sessionManager.send('canvas-stroke', stroke);
-      else if (!remoteSession) sync?.sendStroke(stroke);
+      connection.send('canvas-stroke', stroke);
     }
 
-    // Simulated partner drawing is only the offline fallback — a real peer
-    // draws back over the channel/WebSocket.
-    if (!hasPeer && !sessionManager && canvasLogs.length === 0) {
+    // Simulated partner drawing is the offline fallback for local solo mode
+    // only — a real peer draws back over the active transport.
+    if (!hasPeer && connection.mode === 'local' && canvasLogs.length === 0) {
       setPartnerDrawing(true);
       setCanvasLogs(prev => [`${nameB || 'User B'} is drawing back...`, ...prev]);
 
@@ -389,8 +352,7 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
     strokesRef.current = [];
     setCanvasLogs([]);
     redrawAll();
-    if (sessionManager) sessionManager.send('canvas-clear', {});
-    else if (!remoteSession) sync?.sendCanvasClear();
+    connection.send('canvas-clear', {});
   };
 
   // Activity list

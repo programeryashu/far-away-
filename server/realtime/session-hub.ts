@@ -1,7 +1,16 @@
 import { WebSocket } from "ws";
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
-import { parseEnvelope } from "../../shared/protocol.js";
+import {
+  CINEMA_EVENT,
+  KNOWN_CLIENT_EVENTS,
+  makeEnvelope,
+  parseClientEnvelope,
+  parseEnvelope,
+  parseServerEnvelope,
+  type ChatSendPayload,
+  type StrokePayload,
+} from "../../shared/protocol.js";
 
 export interface SessionPeer {
   connectionId: string;
@@ -46,9 +55,35 @@ export class SessionHub {
 
     const otherConnections = this.getOtherConnections(sessionId, connectionId);
     for (const otherId of otherConnections) {
+      // A connection of the same identity (e.g. two tabs, or an overlapping
+      // reload) must not make the other see itself as a peer.
+      const other = this.peers.get(otherId);
+      if (!other || other.peerId === peerId) continue;
       this.sendToConnection(otherId, {
         event: "peer-joined",
-        payload: { peerId },
+        payload: {
+          peerId,
+          displayName: peer.display_name,
+          cityJson: peer.city_json,
+        },
+      });
+    }
+
+    // Live presence is socket truth, not database membership: tell the new
+    // connection who is already online right now (deduped by peerId).
+    const notified = new Set<string>([peerId]);
+    for (const otherId of otherConnections) {
+      const other = this.peers.get(otherId);
+      if (!other || notified.has(other.peerId)) continue;
+      notified.add(other.peerId);
+      const otherPeer = this.fastify.store.getPeer(other.peerId);
+      this.sendToConnection(connectionId, {
+        event: "peer-joined",
+        payload: {
+          peerId: other.peerId,
+          displayName: otherPeer?.display_name,
+          cityJson: otherPeer?.city_json,
+        },
       });
     }
 
@@ -74,64 +109,126 @@ export class SessionHub {
       return;
     }
 
-    const envelope = parseEnvelope(parsed);
+    // The client→server union validates the event name AND its payload. A
+    // frame that does not match is rejected before any handling runs, so
+    // malformed payloads can never crash or corrupt session state.
+    const envelope = parseClientEnvelope(parsed);
     if (!envelope) {
-      this.sendToConnection(connectionId, {
-        event: "error",
-        payload: { message: "invalid envelope" },
-      });
+      // Distinguish an unknown event (forward compatibility) from a known
+      // event carrying a malformed payload so clients get a useful error.
+      const base = parseEnvelope(parsed);
+      if (base) {
+        const message = KNOWN_CLIENT_EVENTS.has(base.event)
+          ? `invalid ${base.event} payload`
+          : `unsupported event: ${base.event}`;
+        this.sendToConnection(connectionId, { event: "error", payload: { message } });
+      } else {
+        this.sendToConnection(connectionId, {
+          event: "error",
+          payload: { message: "invalid envelope" },
+        });
+      }
       return;
     }
 
     switch (envelope.event) {
+      case "hello":
+        // The `connected` frame sent on socket establishment is the handshake
+        // acknowledgment; hello needs no reply.
+        break;
       case "chat":
         this.handleChat(connectionId, record, envelope.payload);
         break;
       case "ping":
-        this.sendToConnection(connectionId, { event: "pong", payload: {} });
+        // Echo the client's timestamp verbatim so it can compute RTT.
+        this.sendToConnection(connectionId, {
+          event: "pong",
+          payload: { ts: envelope.payload.ts },
+        });
         break;
       case "state-request":
         this.handleStateRequest(connectionId, record);
         break;
       case "canvas-stroke":
-      case "canvas-clear":
-      case "timer":
+        this.persistStroke(record.sessionId, envelope.payload);
         this.broadcastToSession(
           record.sessionId,
-          { event: envelope.event, payload: envelope.payload },
+          { event: "canvas-stroke", payload: envelope.payload },
           connectionId,
         );
         break;
-      default:
-        this.sendToConnection(connectionId, {
-          event: "error",
-          payload: { message: `unsupported event: ${envelope.event}` },
-        });
+      case "canvas-clear":
+        this.fastify.store.updateCanvasSnapshot(record.sessionId, "[]");
+        this.broadcastToSession(
+          record.sessionId,
+          { event: "canvas-clear", payload: {} },
+          connectionId,
+        );
         break;
+      case CINEMA_EVENT:
+        this.broadcastToSession(
+          record.sessionId,
+          { event: CINEMA_EVENT, payload: envelope.payload },
+          connectionId,
+        );
+        break;
+      case "timer":
+        this.fastify.store.upsertTimerState(
+          record.sessionId,
+          envelope.payload.action,
+          envelope.payload.endAt,
+          envelope.payload.remaining,
+        );
+        this.broadcastToSession(
+          record.sessionId,
+          { event: "timer", payload: envelope.payload },
+          connectionId,
+        );
+        break;
+      case "identity-update": {
+        const { displayName, city } = envelope.payload;
+        // The peerId comes from the authenticated connection, never the
+        // payload, so a client can only ever update its own identity.
+        this.fastify.store.updatePeerIdentity(
+          record.peerId,
+          displayName,
+          JSON.stringify(city),
+        );
+        for (const otherId of this.getOtherConnections(record.sessionId, connectionId)) {
+          this.sendToConnection(otherId, {
+            event: "peer-updated",
+            payload: {
+              peerId: record.peerId,
+              displayName,
+              cityJson: JSON.stringify(city),
+            },
+          });
+        }
+        break;
+      }
     }
   }
 
-  // Removed handleHello as client-triggered
+  private persistStroke(sessionId: string, stroke: StrokePayload) {
+    const snapshot = this.fastify.store.getCanvasSnapshot(sessionId);
+    let strokes: unknown[] = [];
+    if (snapshot) {
+      try {
+        const parsed = JSON.parse(snapshot.strokes_json) as unknown;
+        if (Array.isArray(parsed)) strokes = parsed;
+      } catch {
+        strokes = [];
+      }
+    }
+    strokes.push(stroke);
+    this.fastify.store.updateCanvasSnapshot(sessionId, JSON.stringify(strokes));
+  }
 
   private handleChat(
     connectionId: string,
     record: SessionPeer,
-    payload: unknown,
+    payload: ChatSendPayload,
   ) {
-    const chatPayload = payload as { text?: string };
-    if (
-      !chatPayload ||
-      typeof chatPayload !== "object" ||
-      typeof chatPayload.text !== "string" ||
-      !chatPayload.text.trim()
-    ) {
-      this.sendToConnection(connectionId, {
-        event: "error",
-        payload: { message: "invalid chat payload" },
-      });
-      return;
-    }
-
     const peer = this.fastify.store.getPeer(record.peerId);
     if (!peer) return;
 
@@ -143,13 +240,20 @@ export class SessionHub {
       record.sessionId,
       record.peerId,
       peer.display_name,
-      chatPayload.text,
+      payload.text,
       seq,
     );
 
+    // Echo both the client's ref id (so the sender can correlate the ack with
+    // its local message) and the server-assigned message id (so the sender can
+    // dedupe against history after a reconnect).
     this.sendToConnection(connectionId, {
       event: "ack",
-      payload: { refSeq: seq },
+      payload: {
+        refSeq: seq,
+        refId: payload.id,
+        id: messageId,
+      },
     });
 
     this.broadcastToSession(
@@ -157,8 +261,10 @@ export class SessionHub {
       {
         event: "chat",
         payload: {
+          id: messageId,
           peerId: record.peerId,
-          text: chatPayload.text,
+          sender: peer.display_name,
+          text: payload.text,
           seq,
           timestamp: Date.now(),
         },
@@ -178,6 +284,7 @@ export class SessionHub {
         peers: state.peers,
         messages: state.messages,
         canvas: state.canvas,
+        timer: state.timer,
       },
     });
   }
@@ -200,6 +307,20 @@ export class SessionHub {
       connectionId,
     );
 
+    // A peer is online while ANY of its connections is live (e.g. two tabs or
+    // an overlapping reload): only announce peer-left when the last connection
+    // for that peerId closes, so live peers never see a spurious departure.
+    const stillOnline = remainingConnections.some(
+      (cid) => this.peers.get(cid)?.peerId === record.peerId,
+    );
+    if (stillOnline) {
+      this.fastify.log.info(
+        { connectionId, sessionId: record.sessionId, peerId: record.peerId },
+        "peer connection closed (another remains)",
+      );
+      return;
+    }
+
     for (const otherId of remainingConnections) {
       this.sendToConnection(otherId, {
         event: "peer-left",
@@ -219,7 +340,23 @@ export class SessionHub {
   ) {
     const record = this.peers.get(connectionId);
     if (!record || record.socket.readyState !== WebSocket.OPEN) return;
-    record.socket.send(JSON.stringify(data));
+    const frame = makeEnvelope({
+      event: data.event,
+      sessionId: record.sessionId,
+      peerId: record.peerId,
+      payload: data.payload,
+    });
+    // Hard guarantee: every server→client frame is a full, schema-valid
+    // envelope. A frame that does not satisfy the server union is a bug in
+    // the server, not something to send.
+    if (!parseServerEnvelope(frame)) {
+      this.fastify.log.error(
+        { event: data.event, connectionId, sessionId: record.sessionId },
+        "dropping outbound frame that fails the server envelope schema",
+      );
+      return;
+    }
+    record.socket.send(JSON.stringify(frame));
   }
 
   broadcastToSession(

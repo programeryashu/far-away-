@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Cpu, Globe, CheckCheck } from 'lucide-react';
 import type { OrbitSync } from '../lib/broadcast';
+import type { SessionManager } from '../lib/session';
+import { mergeMessages, serverMessagesToClient } from '../lib/reconcile';
 
 // Module-level monotonic counter for message IDs (avoids Date.now() in render/event closures).
 // The random suffix keeps IDs unique across two tabs on the same origin.
@@ -14,12 +16,16 @@ interface ChatBoxProps {
   nameB: string;
   /** Live-tab sync channel; null when BroadcastChannel is unavailable. */
   sync: OrbitSync | null;
+  /** Session Manager for backend-driven sessions */
+  sessionManager?: SessionManager | null;
   /** True when a second tab is connected right now. */
   hasPeer: boolean;
 }
 
 interface Message {
   id: string;
+  /** Server-assigned id, adopted when the ack for a locally-sent message arrives. */
+  serverId?: string;
   sender: string;
   text: string;
   timestamp: string;
@@ -33,13 +39,17 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   nameA,
   nameB,
   sync,
+  sessionManager,
   hasPeer
 }) => {
-  // This tab is one of the two people: the host tab is User A, the remote tab
-  // is User B. Messages from my own side align right; the peer's align left.
-  const ownSide = sync?.side ?? 'host';
-  const ownName = ownSide === 'host' ? nameA || 'User A' : nameB || 'User B';
-  const peerName = ownSide === 'host' ? nameB || 'User B' : nameA || 'User A';
+  // This tab is one of the two people: in a session the role decides which
+  // side is mine; in local mode the BroadcastChannel side does. Messages from
+  // my own side align right; the peer's align left.
+  const ownIsA = sessionManager
+    ? sessionManager.role === 'a'
+    : (sync?.side ?? 'host') === 'host';
+  const ownName = ownIsA ? nameA || 'User A' : nameB || 'User B';
+  const peerName = ownIsA ? nameB || 'User B' : nameA || 'User A';
 
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -59,8 +69,35 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Inbound chat from a real second tab — arrive as delivered, never auto-reply.
+  // Inbound chat from a real peer — arrive as delivered, never auto-reply.
+  // Dedupe by server-assigned id so history and live broadcasts never
+  // duplicate; the ack swaps our local id for the server id.
   useEffect(() => {
+    if (sessionManager) {
+      // Envelopes arrive already validated against the server union — the
+      // chat/ack/state payloads are fully typed, so no casts are needed.
+      return sessionManager.onEvent((env) => {
+        if (env.event === 'chat') {
+          const inbound: Message = {
+            id: env.payload.id,
+            sender: env.payload.sender || 'Peer',
+            text: env.payload.text,
+            timestamp: new Date(env.payload.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            status: 'delivered'
+          };
+          setMessages((prev) => mergeMessages(prev, [inbound]));
+        } else if (env.event === 'ack') {
+          if (env.payload.refId && env.payload.id) {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === env.payload.refId ? { ...m, serverId: env.payload.id } : m))
+            );
+          }
+        } else if (env.event === 'state') {
+          setMessages((prev) => mergeMessages(prev, serverMessagesToClient(env.payload.messages)));
+        }
+      });
+    }
+
     if (!sync) return;
     return sync.onMessage((msg) => {
       if (msg.type !== 'chat') return;
@@ -75,7 +112,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         }
       ]);
     });
-  }, [sync]);
+  }, [sync, sessionManager]);
 
   // Haversine distance
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
@@ -119,13 +156,22 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     setMessages(prev => [...prev, newMessage]);
     setInputText('');
 
-    // Send to the real second tab when one is connected.
-    sync?.sendChat({
-      id: userMsgId,
-      sender: ownName,
-      text: inputText,
-      timestamp: newMessage.timestamp
-    });
+    if (sessionManager) {
+      sessionManager.send('chat', {
+        id: userMsgId,
+        sender: ownName,
+        text: inputText,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      });
+    } else {
+      // Send to the real second tab when one is connected.
+      sync?.sendChat({
+        id: userMsgId,
+        sender: ownName,
+        text: inputText,
+        timestamp: newMessage.timestamp
+      });
+    }
 
     // Trigger Transit routing animation simulation
     setRoutingStatus('Routing...');
@@ -147,7 +193,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
       // Step 3: Auto partner reply is only the offline fallback — a real
       // second tab answers for itself over the channel.
-      if (!hasPeer) simulatePartnerReply();
+      if (!hasPeer && !sessionManager) simulatePartnerReply();
     }, 1500);
   };
 

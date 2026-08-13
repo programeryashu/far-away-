@@ -1,10 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Zap, Activity } from 'lucide-react';
 import type { OrbitSync } from '../lib/broadcast';
+import type { SessionManager } from '../lib/session';
 
 interface PingMeterProps {
   /** Live-tab sync channel; null when BroadcastChannel is unavailable. */
   sync: OrbitSync | null;
+  /** Session Manager for backend-driven sessions */
+  sessionManager?: SessionManager | null;
   /** True when a second tab is connected right now. */
   hasPeer: boolean;
 }
@@ -18,7 +21,7 @@ const PONG_TIMEOUT_MS = 2000;
 const SIM_MIN_MS = 25;
 const SIM_MAX_MS = 90;
 
-export const PingMeter: React.FC<PingMeterProps> = ({ sync, hasPeer }) => {
+export const PingMeter: React.FC<PingMeterProps> = ({ sync, sessionManager, hasPeer }) => {
   const [status, setStatus] = useState<PingStatus>('idle');
   const [latency, setLatency] = useState<number | null>(null);
   const [lastPingedAt, setLastPingedAt] = useState<number | null>(null);
@@ -33,6 +36,23 @@ export const PingMeter: React.FC<PingMeterProps> = ({ sync, hasPeer }) => {
   // peer can measure round-trip. Our own pong → match it against the last
   // ping we sent and compute RTT.
   useEffect(() => {
+    if (sessionManager) {
+        return sessionManager.onEvent((env) => {
+            // The pong payload is schema-validated: ts is a number that the
+            // server echoed from our own ping, so only a matching in-flight
+            // timestamp counts as this measurement.
+            if (env.event === 'pong' && pendingTsRef.current !== null && env.payload.ts === pendingTsRef.current) {
+                if (failTimerRef.current !== null) window.clearTimeout(failTimerRef.current);
+                if (simTimerRef.current !== null) window.clearTimeout(simTimerRef.current);
+                failTimerRef.current = null;
+                simTimerRef.current = null;
+                pendingTsRef.current = null;
+                setLatency(Date.now() - env.payload.ts);
+                setStatus('measured');
+            }
+        });
+    }
+
     if (!sync) return;
     return sync.onMessage((msg) => {
       if (msg.type === 'ping') {
@@ -47,7 +67,7 @@ export const PingMeter: React.FC<PingMeterProps> = ({ sync, hasPeer }) => {
         setStatus('measured');
       }
     });
-  }, [sync]);
+  }, [sync, sessionManager]);
 
   // Cleanup timers on unmount.
   useEffect(() => {
@@ -64,7 +84,16 @@ export const PingMeter: React.FC<PingMeterProps> = ({ sync, hasPeer }) => {
     setLatency(null);
     setLastPingedAt(ts);
 
-    if (sync && hasPeer) {
+    if (sessionManager) {
+        sessionManager.send('ping', { ts });
+        failTimerRef.current = window.setTimeout(() => {
+          if (pendingTsRef.current === ts) {
+            pendingTsRef.current = null;
+            failTimerRef.current = null;
+            setStatus('idle');
+          }
+        }, PONG_TIMEOUT_MS);
+    } else if (sync && hasPeer) {
       // Real round-trip across the BroadcastChannel.
       sync.sendPing(ts);
       failTimerRef.current = window.setTimeout(() => {
@@ -132,7 +161,11 @@ export const PingMeter: React.FC<PingMeterProps> = ({ sync, hasPeer }) => {
               Ping the Light
             </h2>
             <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-              {hasPeer ? 'real BroadcastChannel round-trip' : 'solo · sim fallback'}
+              {sessionManager
+                ? 'real WebSocket round-trip'
+                : hasPeer
+                  ? 'real BroadcastChannel round-trip'
+                  : 'solo · sim fallback'}
             </span>
           </div>
         </div>

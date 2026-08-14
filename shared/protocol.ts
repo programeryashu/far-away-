@@ -114,6 +114,17 @@ export const IdentityUpdatePayloadSchema = z.object({
 });
 export type IdentityUpdatePayload = z.infer<typeof IdentityUpdatePayloadSchema>;
 
+export const StateRequestPayloadSchema = z.object({
+  /**
+   * The client's last applied session event seq. 0 = no base state yet (fresh
+   * page/join) — the server answers with the full state snapshot. A positive
+   * value asks the server to replay every event strictly after it, or fall
+   * back to the snapshot when the range is no longer available.
+   */
+  afterSeq: z.number().int().nonnegative(),
+});
+export type StateRequestPayload = z.infer<typeof StateRequestPayloadSchema>;
+
 // ---- server → client payloads ----
 
 export const ConnectedPayloadSchema = z.object({
@@ -215,6 +226,12 @@ export const StatePayloadSchema = z.object({
   messages: z.array(StateMessageSchema),
   canvas: StateCanvasSchema.nullable(),
   timer: StateTimerSchema.nullable(),
+  /**
+   * The last session event seq incorporated into this snapshot. The client
+   * advances its lastAppliedEventSeq to this boundary (never backwards), so a
+   * snapshot followed by live events is gap-free and duplicates are ignored.
+   */
+  snapshotSeq: z.number().int().nonnegative(),
 });
 export type StatePayload = z.infer<typeof StatePayloadSchema>;
 
@@ -230,7 +247,7 @@ export const ClientEnvelopeSchema = z.discriminatedUnion("event", [
   z.object({ ...envelopeFields, event: z.literal("timer"), payload: TimerPayloadSchema }),
   z.object({ ...envelopeFields, event: z.literal("cinema"), payload: CinemaPayloadSchema }),
   z.object({ ...envelopeFields, event: z.literal("identity-update"), payload: IdentityUpdatePayloadSchema }),
-  z.object({ ...envelopeFields, event: z.literal("state-request"), payload: EmptyPayloadSchema }),
+  z.object({ ...envelopeFields, event: z.literal("state-request"), payload: StateRequestPayloadSchema }),
   z.object({ ...envelopeFields, event: z.literal("ping"), payload: PingPayloadSchema }),
 ]);
 export type ClientEnvelope = z.infer<typeof ClientEnvelopeSchema>;
@@ -269,6 +286,22 @@ export const KNOWN_CLIENT_EVENTS: ReadonlySet<string> = new Set([
   "identity-update",
   "state-request",
   "ping",
+]);
+
+/**
+ * Server→client events that participate in the durable per-session event
+ * stream. Each carries the server-assigned session event seq in the envelope;
+ * the client dedupes, orders, and catches up on exactly these. Presence events
+ * (peer-joined / peer-left) are deliberately excluded: presence is socket
+ * truth, not replayable domain state.
+ */
+export const SEQUENCED_SERVER_EVENTS: ReadonlySet<string> = new Set([
+  "chat",
+  "canvas-stroke",
+  "canvas-clear",
+  "timer",
+  "cinema",
+  "peer-updated",
 ]);
 
 /** Parse and fully validate a client→server frame. Unknown events → null. */

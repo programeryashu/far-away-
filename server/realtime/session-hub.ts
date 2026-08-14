@@ -147,32 +147,43 @@ export class SessionHub {
         });
         break;
       case "state-request":
-        this.handleStateRequest(connectionId, record);
+        this.handleStateRequest(connectionId, record, envelope.payload.afterSeq);
         break;
-      case "canvas-stroke":
+      case "canvas-stroke": {
+        const seq = this.logEvent(record.sessionId, "canvas-stroke", envelope.payload);
+        if (seq === null) break;
         this.persistStroke(record.sessionId, envelope.payload);
         this.broadcastToSession(
           record.sessionId,
-          { event: "canvas-stroke", payload: envelope.payload },
+          { event: "canvas-stroke", payload: envelope.payload, seq },
           connectionId,
         );
         break;
-      case "canvas-clear":
+      }
+      case "canvas-clear": {
+        const seq = this.logEvent(record.sessionId, "canvas-clear", {});
+        if (seq === null) break;
         this.fastify.store.updateCanvasSnapshot(record.sessionId, "[]");
         this.broadcastToSession(
           record.sessionId,
-          { event: "canvas-clear", payload: {} },
+          { event: "canvas-clear", payload: {}, seq },
           connectionId,
         );
         break;
-      case CINEMA_EVENT:
+      }
+      case CINEMA_EVENT: {
+        const seq = this.logEvent(record.sessionId, CINEMA_EVENT, envelope.payload);
+        if (seq === null) break;
         this.broadcastToSession(
           record.sessionId,
-          { event: CINEMA_EVENT, payload: envelope.payload },
+          { event: CINEMA_EVENT, payload: envelope.payload, seq },
           connectionId,
         );
         break;
-      case "timer":
+      }
+      case "timer": {
+        const seq = this.logEvent(record.sessionId, "timer", envelope.payload);
+        if (seq === null) break;
         this.fastify.store.upsertTimerState(
           record.sessionId,
           envelope.payload.action,
@@ -181,32 +192,50 @@ export class SessionHub {
         );
         this.broadcastToSession(
           record.sessionId,
-          { event: "timer", payload: envelope.payload },
+          { event: "timer", payload: envelope.payload, seq },
           connectionId,
         );
         break;
+      }
       case "identity-update": {
         const { displayName, city } = envelope.payload;
+        const cityJson = JSON.stringify(city);
+        const peerUpdated = { peerId: record.peerId, displayName, cityJson };
         // The peerId comes from the authenticated connection, never the
         // payload, so a client can only ever update its own identity.
-        this.fastify.store.updatePeerIdentity(
-          record.peerId,
-          displayName,
-          JSON.stringify(city),
-        );
+        const seq = this.logEvent(record.sessionId, "peer-updated", peerUpdated);
+        if (seq === null) break;
+        this.fastify.store.updatePeerIdentity(record.peerId, displayName, cityJson);
         for (const otherId of this.getOtherConnections(record.sessionId, connectionId)) {
-          this.sendToConnection(otherId, {
-            event: "peer-updated",
-            payload: {
-              peerId: record.peerId,
-              displayName,
-              cityJson: JSON.stringify(city),
-            },
-          });
+          this.sendToConnection(otherId, { event: "peer-updated", payload: peerUpdated, seq });
         }
         break;
       }
     }
+  }
+
+  /**
+   * Persist a server→client event to the session event log, allocating the
+   * next per-session seq atomically. The payload is validated as a complete
+   * server envelope BEFORE persistence, so the event log can never become a
+   * bypass around protocol validation. Returns the allocated seq (null if the
+   * payload is not a valid server envelope — a server bug, not something to
+   * persist or broadcast).
+   */
+  private logEvent(
+    sessionId: string,
+    event: string,
+    payload: unknown,
+  ): number | null {
+    const frame = makeEnvelope({ event, sessionId, payload });
+    if (!parseServerEnvelope(frame)) {
+      this.fastify.log.error(
+        { event, sessionId },
+        "refusing to log an event that fails the server envelope schema",
+      );
+      return null;
+    }
+    return this.fastify.store.appendEvent(sessionId, event, JSON.stringify(payload));
   }
 
   private persistStroke(sessionId: string, stroke: StrokePayload) {
@@ -234,6 +263,20 @@ export class SessionHub {
 
     const seq = this.fastify.store.getNextSequence(record.sessionId);
     const messageId = randomUUID();
+    const broadcastPayload = {
+      id: messageId,
+      peerId: record.peerId,
+      sender: peer.display_name,
+      text: payload.text,
+      seq,
+      timestamp: Date.now(),
+    };
+
+    // The chat broadcast (not the client's send payload) is what enters the
+    // durable event stream, so a reconnecting peer replays a server-shaped
+    // frame that the client schema already accepts.
+    const eventSeq = this.logEvent(record.sessionId, "chat", broadcastPayload);
+    if (eventSeq === null) return;
 
     this.fastify.store.addMessage(
       messageId,
@@ -258,22 +301,49 @@ export class SessionHub {
 
     this.broadcastToSession(
       record.sessionId,
-      {
-        event: "chat",
-        payload: {
-          id: messageId,
-          peerId: record.peerId,
-          sender: peer.display_name,
-          text: payload.text,
-          seq,
-          timestamp: Date.now(),
-        },
-      },
+      { event: "chat", payload: broadcastPayload, seq: eventSeq },
       connectionId,
     );
   }
 
-  private handleStateRequest(connectionId: string, record: SessionPeer) {
+  private handleStateRequest(connectionId: string, record: SessionPeer, afterSeq: number) {
+    const latest = this.fastify.store.getLatestEventSeq(record.sessionId);
+
+    // Replay is for clients that already have base state (afterSeq > 0) whose
+    // requested range is still contiguous. A fresh client (afterSeq 0) always
+    // gets the snapshot: the log contains events, not the peer/session base a
+    // new page needs. A client fully caught up (afterSeq >= latest) needs
+    // nothing.
+    if (afterSeq > 0) {
+      if (afterSeq >= latest) return; // fully caught up — nothing to send
+      const events = this.fastify.store.getEventsAfterSeq(record.sessionId, afterSeq);
+      if (events.length > 0 && events[0].seq === afterSeq + 1) {
+        let replayed = true;
+        for (const ev of events) {
+          let payload: unknown;
+          try {
+            payload = JSON.parse(ev.payload_json);
+          } catch {
+            this.fastify.log.error(
+              { sessionId: record.sessionId, seq: ev.seq },
+              "event log row has an unparsable payload; falling back to snapshot",
+            );
+            replayed = false;
+            break;
+          }
+          // Replay preserves each event's original seq and timestamp.
+          this.sendToConnection(connectionId, {
+            event: ev.event,
+            payload,
+            seq: ev.seq,
+            timestamp: ev.created_at,
+          });
+        }
+        if (replayed) return;
+      }
+      // Pruned / non-contiguous range → authoritative snapshot below.
+    }
+
     const state = this.fastify.store.getSessionState(record.sessionId);
     if (!state) return;
 
@@ -285,6 +355,7 @@ export class SessionHub {
         messages: state.messages,
         canvas: state.canvas,
         timer: state.timer,
+        snapshotSeq: latest,
       },
     });
   }
@@ -336,7 +407,7 @@ export class SessionHub {
 
   sendToConnection(
     connectionId: string,
-    data: { event: string; payload: unknown },
+    data: { event: string; payload: unknown; seq?: number; timestamp?: number },
   ) {
     const record = this.peers.get(connectionId);
     if (!record || record.socket.readyState !== WebSocket.OPEN) return;
@@ -344,6 +415,8 @@ export class SessionHub {
       event: data.event,
       sessionId: record.sessionId,
       peerId: record.peerId,
+      seq: data.seq ?? 0,
+      timestamp: data.timestamp ?? Date.now(),
       payload: data.payload,
     });
     // Hard guarantee: every server→client frame is a full, schema-valid
@@ -361,7 +434,7 @@ export class SessionHub {
 
   broadcastToSession(
     sessionId: string,
-    data: { event: string; payload: unknown },
+    data: { event: string; payload: unknown; seq?: number },
     excludeConnectionId?: string,
   ) {
     const sessionConns = this.sessionConnections.get(sessionId);

@@ -3,6 +3,7 @@ import {
   PROTOCOL_VERSION,
   BaseEnvelopeSchema,
   KNOWN_CLIENT_EVENTS,
+  SEQUENCED_SERVER_EVENTS,
   makeEnvelope,
   parseClientEnvelope,
   parseEnvelope,
@@ -64,6 +65,7 @@ const validStatePayload = {
   ],
   canvas: { session_id: "s1", strokes_json: "[]", updated_at: 1 },
   timer: { session_id: "s1", action: "start", end_at: 100, remaining: 0, updated_at: 1 },
+  snapshotSeq: 0,
 };
 
 describe("BaseEnvelopeSchema", () => {
@@ -167,7 +169,8 @@ describe("client → server envelopes", () => {
     ["timer", { action: "start", endAt: 1_700_000_100_000, remaining: 0 }],
     ["cinema", { playing: true }],
     ["identity-update", { displayName: "Alicia", city: validCity }],
-    ["state-request", undefined],
+    ["state-request", { afterSeq: 0 }],
+    ["state-request", { afterSeq: 42 }],
     ["ping", { ts: 1_700_000_000_000 }],
   ];
 
@@ -188,7 +191,10 @@ describe("client → server envelopes", () => {
     ["identity-update", { displayName: "Alicia" }, "missing city"],
     ["identity-update", { displayName: "", city: validCity }, "blank display name"],
     ["identity-update", { displayName: "Alicia", city: { name: "Paris" } }, "partial city"],
-    ["state-request", { afterSeq: 3 }, "state-request with a payload"],
+    ["state-request", undefined, "state-request without afterSeq"],
+    ["state-request", {}, "state-request without afterSeq"],
+    ["state-request", { afterSeq: -1 }, "negative afterSeq"],
+    ["state-request", { afterSeq: 1.5 }, "fractional afterSeq"],
     ["ping", { ts: "now" }, "non-numeric ts"],
   ];
 
@@ -242,6 +248,12 @@ describe("server → client envelopes", () => {
       }),
     );
     expect(parsed).not.toBeNull();
+  });
+
+  it("rejects a state payload without snapshotSeq", () => {
+    const withoutSeq = { ...validStatePayload };
+    delete (withoutSeq as Record<string, unknown>).snapshotSeq;
+    expect(parseServerEnvelope(frame("state", withoutSeq))).toBeNull();
   });
 
   const malformedFrames: [string, unknown, string][] = [
@@ -319,6 +331,23 @@ describe("round-trip and forward compatibility", () => {
     expect(parseEnvelope(unknown)).not.toBeNull();
     expect(parseClientEnvelope(unknown)).toBeNull();
     expect(parseServerEnvelope(unknown)).toBeNull();
+  });
+});
+
+describe("SEQUENCED_SERVER_EVENTS", () => {
+  it("covers exactly the replayable server events", () => {
+    expect([...SEQUENCED_SERVER_EVENTS].sort()).toEqual(
+      ["canvas-clear", "canvas-stroke", "chat", "cinema", "peer-updated", "timer"].sort(),
+    );
+  });
+
+  it("excludes presence and control events", () => {
+    expect(SEQUENCED_SERVER_EVENTS.has("peer-joined")).toBe(false);
+    expect(SEQUENCED_SERVER_EVENTS.has("peer-left")).toBe(false);
+    expect(SEQUENCED_SERVER_EVENTS.has("state")).toBe(false);
+    expect(SEQUENCED_SERVER_EVENTS.has("ack")).toBe(false);
+    expect(SEQUENCED_SERVER_EVENTS.has("pong")).toBe(false);
+    expect(SEQUENCED_SERVER_EVENTS.has("error")).toBe(false);
   });
 });
 

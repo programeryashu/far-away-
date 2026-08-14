@@ -33,6 +33,25 @@ export interface CanvasSnapshot {
   updated_at: number;
 }
 
+export interface TimerState {
+  session_id: string;
+  action: 'start' | 'pause' | 'reset';
+  end_at: number;
+  remaining: number;
+  updated_at: number;
+}
+
+export interface SessionEvent {
+  id: number;
+  session_id: string;
+  /** Per-session monotonic sequence — allocated by the store, never by clients. */
+  seq: number;
+  event: string;
+  /** Server-shaped payload (validated against the protocol before persistence). */
+  payload_json: string;
+  created_at: number;
+}
+
 export interface Migration {
   id: number;
   name: string;
@@ -84,6 +103,36 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_peers_session_id ON peers(session_id);
       CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
       CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts);
+    `,
+  },
+  {
+    id: 2,
+    name: "timer_state",
+    sql: `
+      CREATE TABLE IF NOT EXISTS timer_state (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+        action TEXT NOT NULL CHECK(action IN ('start', 'pause', 'reset')),
+        end_at INTEGER NOT NULL,
+        remaining INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `,
+  },
+  {
+    id: 3,
+    name: "session_events",
+    sql: `
+      CREATE TABLE IF NOT EXISTS session_events (
+        id INTEGER PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        event TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE(session_id, seq)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_session_events_session_seq ON session_events(session_id, seq);
     `,
   },
 ];

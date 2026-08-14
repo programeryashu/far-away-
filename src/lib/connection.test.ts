@@ -326,13 +326,13 @@ describe('RemoteConnection', () => {
     ws.open();
 
     conn.send('ping', { ts: 5 });
-    expect(ws.sent).toHaveLength(1);
-    expect(JSON.parse(ws.sent[0])).toMatchObject({ event: 'ping', payload: { ts: 5 } });
+    const ping = ws.sent.map((s) => JSON.parse(s)).find((s) => s.event === 'ping');
+    expect(ping).toMatchObject({ event: 'ping', payload: { ts: 5 } });
 
     expect(() =>
       conn.send('chat', { text: 123 } as unknown as ChatSendPayload),
     ).toThrow();
-    expect(ws.sent).toHaveLength(1);
+    expect(ws.sent.map((s) => JSON.parse(s)).filter((s) => s.event === 'chat')).toHaveLength(0);
   });
 
   it('derives peer presence from peer events, deduping and ignoring self', () => {

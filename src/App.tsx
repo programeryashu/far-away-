@@ -133,6 +133,11 @@ function App() {
       ? persistedSession
       : null
   );
+  // Mirror for callbacks that must read the session without re-subscribing.
+  const sessionRef = useRef<ClientSession | null>(session);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
   // While an invite URL is open the role is unknown until the join response;
   // a stale persisted role from a different session must not apply.
   const [myRole, setMyRole] = useState<'a' | 'b' | null>(() => {
@@ -248,6 +253,12 @@ function App() {
         }
       });
       const myPeerId = session?.peerId ?? '';
+      // Persist the catch-up position as session metadata so a reconnect
+      // resumes replay from this device's last applied event.
+      const unsubSeq = connection.onSeqChange((seq) => {
+        const current = sessionRef.current;
+        if (current) persistSession({ ...current, lastAppliedEventSeq: seq });
+      });
       const unsubEvent = connection.onEvent((env) => {
         if (env.event === 'state') {
           // State catch-up identifies the peer but does NOT set live presence:
@@ -273,6 +284,7 @@ function App() {
         unsubStatus();
         unsubEvent();
         unsubPeer();
+        unsubSeq();
         connection.stop();
       };
     }

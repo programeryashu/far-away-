@@ -2,6 +2,12 @@ export interface ClientSession {
   sessionId: string;
   peerId: string;
   role: 'a' | 'b';
+  /**
+   * Last server session event seq this client applied. Session metadata only
+   * (never sent to the server as authoritative) — it lets a reconnect resume
+   * replay from where this device left off.
+   */
+  lastAppliedEventSeq?: number;
 }
 
 const STORAGE_KEY = 'orbit.session';
@@ -34,7 +40,9 @@ function isClientSession(value: unknown): value is ClientSession {
   return (
     typeof v.sessionId === 'string' &&
     typeof v.peerId === 'string' &&
-    (v.role === 'a' || v.role === 'b')
+    (v.role === 'a' || v.role === 'b') &&
+    (v.lastAppliedEventSeq === undefined ||
+      (typeof v.lastAppliedEventSeq === 'number' && v.lastAppliedEventSeq >= 0))
   );
 }
 

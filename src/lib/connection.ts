@@ -45,6 +45,12 @@ export interface Connection {
   onEvent(listener: (event: ServerEnvelope) => void): () => void;
   onStatus(listener: (status: ConnectionStatus) => void): () => void;
   onPeerChange(listener: (hasPeer: boolean) => void): () => void;
+  /**
+   * Fires whenever the remote catch-up position (last applied event seq)
+   * advances, so the app can persist it as session metadata. Local mode has no
+   * server event stream and never fires.
+   */
+  onSeqChange(listener: (seq: number) => void): () => void;
 }
 
 /**
@@ -178,6 +184,11 @@ export class LocalConnection implements Connection {
     return () => this.peerListeners.delete(listener);
   }
 
+  onSeqChange(): () => void {
+    // No server event stream in local mode — nothing ever advances.
+    return () => undefined;
+  }
+
   private setStatus(status: ConnectionStatus) {
     if (this.status === status) return;
     this.status = status;
@@ -265,7 +276,11 @@ export class RemoteConnection implements Connection {
   constructor(session: ClientSession) {
     this.session = session;
     this.role = session.role;
-    this.client = new RealtimeClient(session.sessionId, session.peerId);
+    this.client = new RealtimeClient(
+      session.sessionId,
+      session.peerId,
+      session.lastAppliedEventSeq ?? 0,
+    );
 
     this.client.onEvent((env) => {
       if (env.event === 'peer-joined') {
@@ -312,6 +327,10 @@ export class RemoteConnection implements Connection {
     this.peerListeners.add(listener);
     listener(this.onlinePeers.size > 0);
     return () => this.peerListeners.delete(listener);
+  }
+
+  onSeqChange(listener: (seq: number) => void): () => void {
+    return this.client.onSeqChange(listener);
   }
 
   private emitPeerChange() {

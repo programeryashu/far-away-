@@ -81,4 +81,116 @@ describe("Store", () => {
     expect(snap2).not.toBeNull();
     expect(snap2!.strokes_json).toBe("strokes-2");
   });
+
+  it("should upsert and read timer state", () => {
+    const sessionId = "s1";
+    store.createSession(sessionId, "C1", "active", Date.now() + 1000);
+
+    store.upsertTimerState(sessionId, "start", 1000, 0);
+    const timer1 = store.getTimerState(sessionId);
+    expect(timer1).not.toBeNull();
+    expect(timer1!.action).toBe("start");
+    expect(timer1!.end_at).toBe(1000);
+
+    store.upsertTimerState(sessionId, "pause", 0, 42);
+    const timer2 = store.getTimerState(sessionId);
+    expect(timer2!.action).toBe("pause");
+    expect(timer2!.remaining).toBe(42);
+    expect(store.getTimerState("other")).toBeNull();
+  });
+
+  it("should include timer in session state", () => {
+    const sessionId = "s1";
+    store.createSession(sessionId, "C1", "active", Date.now() + 1000);
+    store.upsertTimerState(sessionId, "start", 1234, 0);
+    const state = store.getSessionState(sessionId);
+    expect(state?.timer?.action).toBe("start");
+    expect(state?.timer?.end_at).toBe(1234);
+  });
+
+  it("should update a peer identity", () => {
+    const sessionId = "s1";
+    store.createSession(sessionId, "C1", "active", Date.now() + 1000);
+    store.addPeer("p1", sessionId, "a", "Alice", "{}");
+
+    store.updatePeerIdentity("p1", "Alicia", JSON.stringify({ name: "Paris" }));
+    const peer = store.getPeer("p1");
+    expect(peer!.display_name).toBe("Alicia");
+    expect(JSON.parse(peer!.city_json)).toEqual({ name: "Paris" });
+  });
+
+  describe("session event log", () => {
+    it("starts at seq 1 and increments monotonically", () => {
+      const sessionId = "s1";
+      store.createSession(sessionId, "C1", "active", Date.now() + 1000);
+
+      expect(store.getLatestEventSeq(sessionId)).toBe(0);
+      expect(store.getEventCount(sessionId)).toBe(0);
+
+      const seq1 = store.appendEvent(sessionId, "chat", "{}");
+      const seq2 = store.appendEvent(sessionId, "timer", "{}");
+      expect(seq1).toBe(1);
+      expect(seq2).toBe(2);
+      expect(store.getLatestEventSeq(sessionId)).toBe(2);
+      expect(store.getEventCount(sessionId)).toBe(2);
+    });
+
+    it("keeps per-session sequences independent", () => {
+      store.createSession("s1", "C1", "active", Date.now() + 1000);
+      store.createSession("s2", "C2", "active", Date.now() + 1000);
+
+      expect(store.appendEvent("s1", "chat", "{}")).toBe(1);
+      expect(store.appendEvent("s2", "chat", "{}")).toBe(1);
+      expect(store.appendEvent("s1", "timer", "{}")).toBe(2);
+      expect(store.getLatestEventSeq("s1")).toBe(2);
+      expect(store.getLatestEventSeq("s2")).toBe(1);
+    });
+
+    it("reads events after a seq in order with their payloads", () => {
+      const sessionId = "s1";
+      store.createSession(sessionId, "C1", "active", Date.now() + 1000);
+      store.appendEvent(sessionId, "chat", JSON.stringify({ text: "a" }));
+      store.appendEvent(sessionId, "timer", JSON.stringify({ action: "start" }));
+      store.appendEvent(sessionId, "cinema", JSON.stringify({ playing: true }));
+
+      const after = store.getEventsAfterSeq(sessionId, 1);
+      expect(after.map((e) => e.seq)).toEqual([2, 3]);
+      expect(after.map((e) => e.event)).toEqual(["timer", "cinema"]);
+      expect(JSON.parse(after[0].payload_json)).toEqual({ action: "start" });
+
+      const range = store.getEventsRange(sessionId, 2, 3);
+      expect(range.map((e) => e.seq)).toEqual([2, 3]);
+      expect(store.getEventsAfterSeq(sessionId, 3)).toEqual([]);
+    });
+
+    it("prunes events keeping only the most recent", () => {
+      const sessionId = "s1";
+      store.createSession(sessionId, "C1", "active", Date.now() + 1000);
+      for (let i = 1; i <= 5; i++) {
+        store.appendEvent(sessionId, "chat", JSON.stringify({ i }));
+      }
+
+      const removed = store.pruneEvents(sessionId, 2);
+      expect(removed).toBe(3);
+      expect(store.getEventCount(sessionId)).toBe(2);
+      expect(store.getEventsAfterSeq(sessionId, 0).map((e) => e.seq)).toEqual([4, 5]);
+
+      // Pruning past the end deletes nothing.
+      expect(store.pruneEvents(sessionId, 2)).toBe(0);
+    });
+
+    it("deletes the event log when a session closes or expires", () => {
+      const s1 = "s1";
+      store.createSession(s1, "C1", "active", Date.now() + 1000);
+      store.appendEvent(s1, "chat", "{}");
+      store.closeSession(s1);
+      expect(store.getEventCount(s1)).toBe(0);
+
+      const s2 = "s2";
+      store.createSession(s2, "C2", "active", Date.now() + 1000);
+      store.appendEvent(s2, "chat", "{}");
+      store.expireSession(s2);
+      expect(store.getEventCount(s2)).toBe(0);
+    });
+  });
 });

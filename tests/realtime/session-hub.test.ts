@@ -16,6 +16,7 @@ vi.mock("node:crypto", () => ({
 
 describe("SessionHub", () => {
   let hub: SessionHub;
+  let eventSeqCounter = 0;
   const mockFastify = { log: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() } } as never;
   const mockStore = {
     getPeer: vi.fn(),
@@ -24,12 +25,26 @@ describe("SessionHub", () => {
     addMessage: vi.fn(),
     upsertTimerState: vi.fn(),
     updatePeerIdentity: vi.fn(),
+    updateCanvasSnapshot: vi.fn(),
+    getCanvasSnapshot: vi.fn().mockReturnValue(null),
+    appendEvent: vi.fn(),
+    getLatestEventSeq: vi.fn().mockReturnValue(0),
+    getEventsAfterSeq: vi.fn().mockReturnValue([]),
+    getSessionState: vi.fn().mockReturnValue({
+      session: { id: "s1", code: "C1", status: "active", created_at: 1, expires_at: 9999, closed_at: null },
+      peers: [],
+      messages: [],
+      canvas: null,
+      timer: null,
+    }),
   };
   Object.assign(mockFastify, { store: mockStore });
 
   beforeEach(() => {
     uuidCounter = 0;
+    eventSeqCounter = 0;
     vi.clearAllMocks();
+    mockStore.appendEvent.mockImplementation(() => ++eventSeqCounter);
     hub = new SessionHub(mockFastify);
     mockStore.getPeer.mockReturnValue({ id: "p1", session_id: "s1", role: "a", display_name: "Alice", city_json: "{}" });
   });
@@ -223,6 +238,205 @@ describe("SessionHub", () => {
     const sent = JSON.parse(socket2.send.mock.calls[0][0]);
     expect(sent.event).toBe("timer");
     expect(sent.payload).toEqual({ action: "start", endAt: 1000, remaining: 0 });
+  });
+
+  it("logs every sequenced event and stamps the broadcast envelope with its seq", () => {
+    const socket1 = new MockSocket();
+    const socket2 = new MockSocket();
+    hub.addConnection("s1", "p1", socket1 as unknown as WebSocket);
+    hub.addConnection("s1", "p2", socket2 as unknown as WebSocket);
+
+    vi.clearAllMocks();
+    const send = (event: string, payload: unknown) =>
+      socket1.emit(
+        "message",
+        Buffer.from(
+          JSON.stringify({
+            version: 1,
+            sessionId: "s1",
+            peerId: "p1",
+            seq: 0,
+            timestamp: 123,
+            event,
+            payload,
+          }),
+        ),
+      );
+
+    send("timer", { action: "start", endAt: 1000, remaining: 0 });
+    send("canvas-stroke", { points: [{ x: 1, y: 2 }], color: "#fff" });
+    send("canvas-clear", {});
+    send("cinema", { playing: true });
+    send("chat", { text: "hi" });
+
+    // Every event was appended to the durable log with the right name.
+    expect(mockStore.appendEvent).toHaveBeenNthCalledWith(1, "s1", "timer", expect.any(String));
+    expect(mockStore.appendEvent).toHaveBeenNthCalledWith(2, "s1", "canvas-stroke", expect.any(String));
+    expect(mockStore.appendEvent).toHaveBeenNthCalledWith(3, "s1", "canvas-clear", expect.any(String));
+    expect(mockStore.appendEvent).toHaveBeenNthCalledWith(4, "s1", "cinema", expect.any(String));
+    expect(mockStore.appendEvent).toHaveBeenNthCalledWith(5, "s1", "chat", expect.any(String));
+
+    // The chat log payload is the server broadcast shape, not the send shape.
+    const chatLogPayload = JSON.parse(mockStore.appendEvent.mock.calls[4][2]);
+    expect(chatLogPayload).toMatchObject({ sender: "Alice", text: "hi" });
+    expect(typeof chatLogPayload.id).toBe("string");
+    expect(chatLogPayload.peerId).toBe("p1");
+
+    // Broadcast envelopes carry the allocated event seq (1..5 in order).
+    const sentEvents = socket2.send.mock.calls.map((c) => JSON.parse(c[0]));
+    expect(sentEvents.map((f) => f.seq)).toEqual([1, 2, 3, 4, 5]);
+    expect(sentEvents.map((f) => f.event)).toEqual(["timer", "canvas-stroke", "canvas-clear", "cinema", "chat"]);
+    expect(parseEnvelope(sentEvents[0])).not.toBeNull();
+  });
+
+  it("replays events after the requested seq in order on state-request", () => {
+    const socket = new MockSocket();
+    hub.addConnection("s1", "p1", socket as unknown as WebSocket);
+    mockStore.getLatestEventSeq.mockReturnValue(5);
+    mockStore.getEventsAfterSeq.mockReturnValue([
+      { id: 3, session_id: "s1", seq: 3, event: "chat", payload_json: JSON.stringify({ id: "m3", peerId: "p2", sender: "Bob", text: "yo", seq: 2, timestamp: 1 }), created_at: 100 },
+      { id: 4, session_id: "s1", seq: 4, event: "timer", payload_json: JSON.stringify({ action: "start", endAt: 1, remaining: 0 }), created_at: 200 },
+      { id: 5, session_id: "s1", seq: 5, event: "cinema", payload_json: JSON.stringify({ playing: true }), created_at: 300 },
+    ]);
+
+    vi.clearAllMocks();
+    socket.emit(
+      "message",
+      Buffer.from(
+        JSON.stringify({
+          version: 1,
+          sessionId: "s1",
+          peerId: "p1",
+          seq: 0,
+          timestamp: 123,
+          event: "state-request",
+          payload: { afterSeq: 2 },
+        }),
+      ),
+    );
+
+    // Replay frames preserve their original seqs and order; no snapshot sent.
+    const sent = socket.send.mock.calls.map((c) => JSON.parse(c[0]));
+    expect(sent.map((f) => f.event)).toEqual(["chat", "timer", "cinema"]);
+    expect(sent.map((f) => f.seq)).toEqual([3, 4, 5]);
+    expect(sent[0].payload.text).toBe("yo");
+    expect(sent[0].timestamp).toBe(100); // original event time preserved
+    expect(sent.every((f) => parseEnvelope(f))).toBe(true);
+  });
+
+  it("sends a full snapshot when the requested range is not contiguous", () => {
+    const socket = new MockSocket();
+    hub.addConnection("s1", "p1", socket as unknown as WebSocket);
+    mockStore.getLatestEventSeq.mockReturnValue(5);
+    // Range starts at 4, but afterSeq 2 implies 3 is missing — pruned/gapped.
+    mockStore.getEventsAfterSeq.mockReturnValue([
+      { id: 4, session_id: "s1", seq: 4, event: "chat", payload_json: "{}", created_at: 1 },
+    ]);
+
+    vi.clearAllMocks();
+    socket.emit(
+      "message",
+      Buffer.from(
+        JSON.stringify({
+          version: 1,
+          sessionId: "s1",
+          peerId: "p1",
+          seq: 0,
+          timestamp: 123,
+          event: "state-request",
+          payload: { afterSeq: 2 },
+        }),
+      ),
+    );
+
+    expect(mockStore.getSessionState).toHaveBeenCalledWith("s1");
+    const sent = JSON.parse(socket.send.mock.calls[0][0]);
+    expect(sent.event).toBe("state");
+    expect(sent.payload.snapshotSeq).toBe(5);
+    expect(parseEnvelope(sent)).not.toBeNull();
+  });
+
+  it("always sends a full snapshot to a fresh client (afterSeq 0)", () => {
+    const socket = new MockSocket();
+    hub.addConnection("s1", "p1", socket as unknown as WebSocket);
+    mockStore.getLatestEventSeq.mockReturnValue(9);
+    mockStore.getEventsAfterSeq.mockReturnValue([
+      { id: 1, session_id: "s1", seq: 1, event: "chat", payload_json: "{}", created_at: 1 },
+    ]);
+
+    vi.clearAllMocks();
+    socket.emit(
+      "message",
+      Buffer.from(
+        JSON.stringify({
+          version: 1,
+          sessionId: "s1",
+          peerId: "p1",
+          seq: 0,
+          timestamp: 123,
+          event: "state-request",
+          payload: { afterSeq: 0 },
+        }),
+      ),
+    );
+
+    const sent = JSON.parse(socket.send.mock.calls[0][0]);
+    expect(sent.event).toBe("state");
+    expect(sent.payload.snapshotSeq).toBe(9);
+  });
+
+  it("sends nothing to a client that is fully caught up", () => {
+    const socket = new MockSocket();
+    hub.addConnection("s1", "p1", socket as unknown as WebSocket);
+    mockStore.getLatestEventSeq.mockReturnValue(4);
+
+    vi.clearAllMocks();
+    socket.emit(
+      "message",
+      Buffer.from(
+        JSON.stringify({
+          version: 1,
+          sessionId: "s1",
+          peerId: "p1",
+          seq: 0,
+          timestamp: 123,
+          event: "state-request",
+          payload: { afterSeq: 4 },
+        }),
+      ),
+    );
+
+    expect(socket.send).not.toHaveBeenCalled();
+  });
+
+  it("logs identity updates as peer-updated and sequences the broadcast", () => {
+    const socket1 = new MockSocket();
+    const socket2 = new MockSocket();
+    hub.addConnection("s1", "p1", socket1 as unknown as WebSocket);
+    hub.addConnection("s1", "p2", socket2 as unknown as WebSocket);
+
+    vi.clearAllMocks();
+    const city = { name: "Paris", country: "France", lat: 48.8566, lng: 2.3522, timezone: "Europe/Paris" };
+    socket1.emit(
+      "message",
+      Buffer.from(
+        JSON.stringify({
+          version: 1,
+          sessionId: "s1",
+          peerId: "p1",
+          seq: 0,
+          timestamp: 123,
+          event: "identity-update",
+          payload: { displayName: "Alicia", city },
+        }),
+      ),
+    );
+
+    expect(mockStore.appendEvent).toHaveBeenCalledWith("s1", "peer-updated", expect.any(String));
+    const sent = JSON.parse(socket2.send.mock.calls[0][0]);
+    expect(sent.event).toBe("peer-updated");
+    expect(sent.seq).toBe(1);
+    expect(sent.payload).toEqual({ peerId: "p1", displayName: "Alicia", cityJson: JSON.stringify(city) });
   });
 
   it("should update identity from the authenticated connection and notify the peer", () => {

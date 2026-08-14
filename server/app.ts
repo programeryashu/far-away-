@@ -3,6 +3,7 @@ import fastifyCors from "@fastify/cors";
 import fastifyEnv from "@fastify/env";
 import fastifyWebsocket from "@fastify/websocket";
 import { z } from "zod";
+import { makeEnvelope } from "../shared/protocol.js";
 import { envSchema, type EnvConfig } from "./config.js";
 import { healthRoutes } from "./routes/health.js";
 import { sessionRoutes } from "./routes/sessions.js";
@@ -49,16 +50,27 @@ export async function buildApp(): Promise<FastifyInstance> {
   await fastify.register(sessionRoutes);
 
   fastify.get("/ws", { websocket: true }, (socket, request) => {
-    const { sessionId, peerId } = z
+    const query = z
       .object({
         sessionId: z.string(),
         peerId: z.string(),
       })
-      .parse(request.query);
+      .safeParse(request.query);
+    if (!query.success) {
+      socket.close(4000, "invalid session");
+      return;
+    }
+    const { sessionId, peerId } = query.data;
 
     const session = fastify.store.getSession(sessionId);
     if (!session || session.status !== "active") {
       socket.close(4000, "invalid session");
+      return;
+    }
+
+    if (session.expires_at < Date.now()) {
+      fastify.store.expireSession(sessionId);
+      socket.close(4000, "session expired");
       return;
     }
 
@@ -70,15 +82,21 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     fastify.sessionHub.addConnection(sessionId, peerId, socket);
 
+    // The client drives catch-up: it sends `state-request { afterSeq }` on
+    // open, and the hub answers with a replay of the missed event range or a
+    // full state snapshot. The server no longer pushes state on connect, so a
+    // client can never be double-snapshotted and its last applied seq decides
+    // what it needs.
     socket.send(
-      JSON.stringify({
-        event: "connected",
-        payload: { sessionId, peerId, role: peer.role },
-      }),
+      JSON.stringify(
+        makeEnvelope({
+          event: "connected",
+          sessionId,
+          peerId,
+          payload: { sessionId, peerId, role: peer.role },
+        }),
+      ),
     );
-
-    const state = fastify.store.getSessionState(sessionId);
-    socket.send(JSON.stringify({ event: "state", payload: state }));
   });
 
   return fastify;

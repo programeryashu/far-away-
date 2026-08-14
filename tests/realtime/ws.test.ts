@@ -11,6 +11,7 @@ const TEST_DB = "./data/test_ws.db";
 interface Frame {
   event: string;
   payload: unknown;
+  seq?: number;
 }
 
 // Resolve when a frame with the given event arrives; resolve null on timeout.
@@ -38,6 +39,25 @@ function waitForEvent(
 
 function waitForClose(ws: WebSocket): Promise<number> {
   return new Promise((resolve) => ws.on("close", (code) => resolve(code)));
+}
+
+function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const tick = () => {
+      if (predicate()) return resolve();
+      if (Date.now() - start > timeoutMs) return reject(new Error("timed out waiting for condition"));
+      setTimeout(tick, 10);
+    };
+    tick();
+  });
+}
+
+/** Ask the server for a full state snapshot (fresh-connect catch-up). */
+function requestState(ws: WebSocket, sessionId: string, peerId: string): Promise<Frame | null> {
+  const promise = waitForEvent(ws, "state");
+  ws.send(envelope(sessionId, peerId, "state-request", { afterSeq: 0 }));
+  return promise;
 }
 
 const envelope = (sessionId: string, peerId: string, event: string, payload: unknown) =>
@@ -214,10 +234,11 @@ describe("WebSocket", () => {
     expect(state.messages[1].seq).toBe(2);
     expect(state.messages.map((m) => m.sender_name)).toEqual(["Alice", "Bob"]);
 
-    // B reconnects → history replays with both messages.
+    // B reconnects → catch-up replays history with both messages.
     wsB.close();
     const wsB2 = new WebSocket(wsUrl(id, peerB));
-    const stateEvent = await waitForEvent(wsB2, "state");
+    await waitForEvent(wsB2, "connected");
+    const stateEvent = await requestState(wsB2, id, peerB);
     const history = (stateEvent?.payload as { messages?: { seq: number }[] }).messages ?? [];
     expect(history.map((m) => m.seq)).toEqual([1, 2]);
 
@@ -307,7 +328,8 @@ describe("WebSocket", () => {
     // A reconnecting peer's state catch-up shows the persisted timer once.
     wsB.close();
     const wsB2 = new WebSocket(wsUrl(id, peerB));
-    const stateEvent = await waitForEvent(wsB2, "state");
+    await waitForEvent(wsB2, "connected");
+    const stateEvent = await requestState(wsB2, id, peerB);
     const catchUp = (stateEvent?.payload as { timer?: { action: string; end_at: number } }).timer;
     expect(catchUp?.action).toBe("start");
     expect(catchUp?.end_at).toBe(endAt);
@@ -438,7 +460,8 @@ describe("WebSocket", () => {
     // Reconnecting B must receive the persisted timer in state catch-up.
     wsB.close();
     const wsB2 = new WebSocket(wsUrl(id, peerB));
-    const stateEvent = await waitForEvent(wsB2, "state");
+    await waitForEvent(wsB2, "connected");
+    const stateEvent = await requestState(wsB2, id, peerB);
     const timer = (stateEvent?.payload as { timer?: { action: string; end_at: number } }).timer;
     expect(timer?.action).toBe("start");
     expect(timer?.end_at).toBe(endAt);
@@ -466,7 +489,8 @@ describe("WebSocket", () => {
     // Persisted in the DB → reconnecting B's state catch-up sees the new name.
     wsB.close();
     const wsB2 = new WebSocket(wsUrl(id, peerB));
-    const stateEvent = await waitForEvent(wsB2, "state");
+    await waitForEvent(wsB2, "connected");
+    const stateEvent = await requestState(wsB2, id, peerB);
     const peers = (stateEvent?.payload as { peers?: { role: string; display_name: string; city_json: string }[] }).peers ?? [];
     const peerARow = peers.find((p) => p.role === "a");
     expect(peerARow?.display_name).toBe("Alicia");
@@ -474,6 +498,80 @@ describe("WebSocket", () => {
 
     wsA.close();
     wsB2.close();
+  });
+
+  it("replays missed events in order to a reconnecting peer with no duplicates, then live events continue", async () => {
+    const { id, peerA, peerB } = await createJoinedSession();
+    const wsA = new WebSocket(wsUrl(id, peerA));
+    const wsB = new WebSocket(wsUrl(id, peerB));
+    await waitForEvent(wsA, "connected");
+    await waitForEvent(wsB, "connected");
+
+    // A sends one event B applies before going offline (event seq 1).
+    const firstChatPromise = waitForEvent(wsB, "chat");
+    wsA.send(envelope(id, peerA, "chat", { id: "pre-1", sender: "Alice", text: "before" }));
+    const firstChat = await firstChatPromise;
+    expect(firstChat?.seq).toBe(1);
+
+    // B disconnects.
+    wsB.close();
+    await waitForClose(wsB);
+
+    // While B is offline, A produces chat/timer/canvas/cinema/identity events.
+    wsA.send(envelope(id, peerA, "chat", { id: "off-1", sender: "Alice", text: "during" }));
+    const city = { name: "Paris", country: "France", lat: 48.8566, lng: 2.3522, timezone: "Europe/Paris" };
+    wsA.send(envelope(id, peerA, "identity-update", { displayName: "Alicia", city }));
+    wsA.send(envelope(id, peerA, "timer", { action: "start", endAt: Date.now() + 60000, remaining: 0 }));
+    wsA.send(envelope(id, peerA, "cinema", { playing: true }));
+    wsA.send(envelope(id, peerA, "canvas-stroke", { points: [{ x: 1, y: 2 }], color: "#fff" }));
+
+    // Let the server persist everything, then B reconnects and requests a
+    // replay strictly after the seq it already applied (1).
+    await new Promise((r) => setTimeout(r, 250));
+    const wsB2 = new WebSocket(wsUrl(id, peerB));
+    await waitForEvent(wsB2, "connected");
+    const frames: { event: string; seq: number; payload: Record<string, unknown> }[] = [];
+    wsB2.on("message", (raw: Buffer) => {
+      const data = JSON.parse(raw.toString()) as (typeof frames)[number];
+      frames.push(data);
+    });
+    wsB2.send(envelope(id, peerB, "state-request", { afterSeq: 1 }));
+
+    // The missed range replays as individual envelopes with original seqs.
+    await waitFor(() => frames.length >= 5);
+    expect(frames.map((f) => f.event)).toEqual(["chat", "peer-updated", "timer", "cinema", "canvas-stroke"]);
+    expect(frames.map((f) => f.seq)).toEqual([2, 3, 4, 5, 6]);
+    expect(frames[0].payload.text).toBe("during");
+    expect(frames[1].payload.displayName).toBe("Alicia");
+    expect(frames[1].payload.peerId).toBe(peerA);
+    expect(frames[2].payload.action).toBe("start");
+    expect(frames[3].payload.playing).toBe(true);
+    expect(frames.every((f) => parseEnvelope(f as unknown as Record<string, unknown>))).toBe(true);
+
+    // No duplicates: nothing further arrives within a quiet window.
+    await new Promise((r) => setTimeout(r, 250));
+    expect(frames.length).toBe(5);
+
+    // Live events resume normally with the next seq.
+    const livePromise = waitForEvent(wsB2, "timer");
+    wsA.send(envelope(id, peerA, "timer", { action: "pause", endAt: 0, remaining: 488 }));
+    const live = await livePromise;
+    expect(live?.seq).toBe(7);
+    expect((live?.payload as { action?: string }).action).toBe("pause");
+
+    // A fresh client still gets the authoritative snapshot with snapshotSeq.
+    const wsB3 = new WebSocket(wsUrl(id, peerB));
+    await waitForEvent(wsB3, "connected");
+    const stateEvent = await requestState(wsB3, id, peerB);
+    const sp = stateEvent?.payload as { snapshotSeq?: number; messages?: unknown[]; peers?: unknown[] };
+    expect(sp.snapshotSeq).toBe(7);
+    expect(sp.messages).toHaveLength(2);
+    expect(sp.peers).toHaveLength(2);
+    expect((sp.peers as { role: string; display_name: string }[]).find((p) => p.role === "a")?.display_name).toBe("Alicia");
+
+    wsA.close();
+    wsB2.close();
+    wsB3.close();
   });
 
   it("should report live presence to a newly connected peer and after reconnect", async () => {

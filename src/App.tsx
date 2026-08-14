@@ -439,6 +439,12 @@ function App() {
         // Best effort — local cleanup proceeds regardless.
       }
     }
+    // Silence the dying connection synchronously, BEFORE the state changes:
+    // the server kicks the socket during leave, and its close event can land
+    // after 'local' is committed but before React's passive cleanup runs.
+    // RemoteConnection.stop() makes a stopped connection permanently silent,
+    // so a late close can never override the local-mode state below.
+    connectionRef.current?.stop();
     if (identityTimerRef.current !== null) window.clearTimeout(identityTimerRef.current);
     identityTimerRef.current = null;
     pendingIdentityRef.current = null;

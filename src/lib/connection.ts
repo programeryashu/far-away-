@@ -272,6 +272,10 @@ export class RemoteConnection implements Connection {
   private statusListeners = new Set<(status: ConnectionStatus) => void>();
   private peerListeners = new Set<(hasPeer: boolean) => void>();
   private onlinePeers = new Set<string>();
+  // Once the app leaves (or swaps away), this connection is permanently
+  // silent: late close/status events — e.g. the server kicking the socket
+  // during a leave — must never reach the UI after it has moved on.
+  private stopped = false;
 
   constructor(session: ClientSession) {
     this.session = session;
@@ -297,7 +301,10 @@ export class RemoteConnection implements Connection {
       }
       this.listeners.forEach((listener) => listener(env));
     });
-    this.client.onStatusChange((status) => this.statusListeners.forEach((listener) => listener(status)));
+    this.client.onStatusChange((status) => {
+      if (this.stopped) return;
+      this.statusListeners.forEach((listener) => listener(status));
+    });
   }
 
   start(): void {
@@ -305,6 +312,10 @@ export class RemoteConnection implements Connection {
   }
 
   stop(): void {
+    // Silence first, then tear down: the socket's close event may arrive
+    // asynchronously (or the server may have already kicked it), and nothing
+    // a dying connection says afterwards may reach the UI.
+    this.stopped = true;
     this.client.disconnect();
   }
 

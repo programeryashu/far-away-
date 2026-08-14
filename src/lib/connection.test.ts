@@ -335,6 +335,29 @@ describe('RemoteConnection', () => {
     expect(ws.sent.map((s) => JSON.parse(s)).filter((s) => s.event === 'chat')).toHaveLength(0);
   });
 
+  it('stays silent after stop(): a late close must not deliver a stale status', () => {
+    // Regression: leaving a session makes the server kick the socket. The
+    // close event can arrive after the UI has already returned to local mode
+    // but before React's passive cleanup unsubscribes. A stopped connection
+    // must be permanently silent so that close never overrides the new state.
+    const conn = new RemoteConnection(session);
+    const statuses: string[] = [];
+    conn.onStatus((s) => statuses.push(s));
+    conn.start();
+    const ws = FakeWebSocket.instances[0];
+    ws.open();
+    expect(statuses).toContain('connected');
+
+    conn.stop();
+
+    // The server's kick close (and any further events) arrive after stop.
+    ws.close(1000);
+    ws.emit(frame('peer-left', { peerId: 'p2' }));
+    expect(statuses).not.toContain('disconnected');
+    expect(statuses).not.toContain('reconnecting');
+    expect(statuses.filter((s) => s === 'connected')).toHaveLength(1);
+  });
+
   it('derives peer presence from peer events, deduping and ignoring self', () => {
     const conn = new RemoteConnection(session);
     const peers: boolean[] = [];

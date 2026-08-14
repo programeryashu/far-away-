@@ -15,6 +15,8 @@ interface LocationSelectorProps {
   selectedCity: CityData;
   onCitySelect: (city: CityData) => void;
   colorTheme: 'primary' | 'secondary';
+  /** Read-only when the other participant owns this side in a session. */
+  disabled?: boolean;
 }
 
 export const LocationSelector: React.FC<LocationSelectorProps> = ({
@@ -23,7 +25,8 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
   setUserName,
   selectedCity,
   onCitySelect,
-  colorTheme
+  colorTheme,
+  disabled = false
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [apiResults, setApiResults] = useState<CityData[]>([]);
@@ -173,6 +176,7 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
             value={userName}
             onChange={(e) => setUserName(e.target.value)}
             placeholder="Enter name..."
+            disabled={disabled}
           />
         </div>
 
@@ -184,7 +188,7 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
             <button
               type="button"
               onClick={handleUseMyLocation}
-              disabled={!geoSupported || locating}
+              disabled={disabled || !geoSupported || locating}
               className="btn btn-outline"
               style={{ padding: '5px 10px', fontSize: '11px', borderRadius: 'var(--radius-sm)', gap: '6px' }}
               aria-label="Use my current location"
@@ -203,6 +207,7 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
               onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
               placeholder={`${selectedCity.name}, ${selectedCity.country}`}
               style={{ paddingRight: '40px' }}
+              disabled={disabled}
             />
             <Search
               size={18}

@@ -143,10 +143,10 @@ export class Store {
       .get(sessionId, role) as unknown as Peer | null;
   }
 
-  updatePeerLastSeen(id: string) {
+  updatePeerLastSeen(id: string, at: number = Date.now()) {
     this.db
       .prepare("UPDATE peers SET last_seen = ? WHERE id = ?")
-      .run(Date.now(), id);
+      .run(at, id);
   }
 
   removePeer(id: string) {

@@ -21,6 +21,9 @@ data/
 # opencode
 .opencode/
 
+# freebuff preview tooling state (logs, run notes) — never commit machine-specific state
+.freebuff/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

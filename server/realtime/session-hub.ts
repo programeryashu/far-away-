@@ -457,6 +457,31 @@ export class SessionHub {
     return result;
   }
 
+  /**
+   * Live presence is socket truth: a peerId is online when any of its
+   * connections has a live socket. Database membership alone (a persisted
+   * peer row) never counts as online.
+   */
+  isPeerOnline(peerId: string): boolean {
+    for (const record of this.peers.values()) {
+      if (record.peerId === peerId) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Close every live socket for a peerId (used when its seat is reclaimed by a
+   * new joiner, or on an explicit leave). Runs the same bookkeeping and
+   * peer-left announcements as a natural disconnect.
+   */
+  kickPeer(peerId: string): void {
+    for (const [connectionId, record] of [...this.peers]) {
+      if (record.peerId !== peerId) continue;
+      record.socket.close(1000, "seat reclaimed");
+      this.handleDisconnect(connectionId);
+    }
+  }
+
   get activeConnections(): number {
     return this.peers.size;
   }

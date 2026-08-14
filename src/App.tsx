@@ -12,7 +12,13 @@ import { buildShareUrl, isValidConnectionState, parseShareUrl, type ConnectionSt
 import { OrbitSync } from './lib/broadcast';
 import { clearSession, loadSession, persistSession, type ClientSession } from './lib/session';
 import { createConnection, type Connection } from './lib/connection';
-import { ApiError, createSession, joinSession, leaveSession } from './lib/api';
+import {
+  ApiError,
+  createSession,
+  joinSession,
+  joinSessionByCode,
+  leaveSession
+} from './lib/api';
 import { identityFromParts, otherPeers, peerIdentity, type ServerPeer } from './lib/reconcile';
 
 const STORAGE_KEY = 'faraway.connection';
@@ -63,10 +69,16 @@ function copyFallback(text: string): boolean {
 type SessionState = 'local' | 'joining' | 'connected' | 'reconnecting' | 'disconnected' | 'error';
 
 const SESSION_PARAM = 'session';
+const CODE_PARAM = 'code';
 
 function parseSessionParam(search: string): string | null {
   const params = new URLSearchParams(search);
   return params.get(SESSION_PARAM);
+}
+
+function parseCodeParam(search: string): string | null {
+  const params = new URLSearchParams(search);
+  return params.get(CODE_PARAM);
 }
 
 /** Map an API failure to a friendly message — never surface raw server errors. */
@@ -103,9 +115,10 @@ function App() {
   const [hasRemotePeer, setHasRemotePeer] = useState(false);
 
   const [urlSessionId] = useState(() => parseSessionParam(window.location.search));
+  const [urlCode] = useState(() => parseCodeParam(window.location.search));
   const [persistedSession] = useState(loadSession);
   const [sessionState, setSessionState] = useState<SessionState>(() => {
-    if (urlSessionId) return 'joining';
+    if (urlSessionId || urlCode) return 'joining';
     if (persistedSession) return 'joining';
     return 'local';
   });
@@ -116,7 +129,11 @@ function App() {
   const [connection, setConnection] = useState<Connection>(() =>
     createConnection(
       sync,
+      // An open invite (UUID or code) takes precedence: a code invite cannot be
+      // matched to a persisted session yet, so joining a new session must not
+      // silently reuse a stale persisted one.
       persistedSession &&
+        !urlCode &&
         (!urlSessionId || persistedSession.sessionId === urlSessionId)
         ? persistedSession
         : null
@@ -129,7 +146,8 @@ function App() {
   // The joined server session (remote only); local mode has none.
   const [session, setSession] = useState<ClientSession | null>(() =>
     persistedSession &&
-    (!urlSessionId || persistedSession.sessionId === urlSessionId)
+      !urlCode &&
+      (!urlSessionId || persistedSession.sessionId === urlSessionId)
       ? persistedSession
       : null
   );
@@ -141,7 +159,7 @@ function App() {
   // While an invite URL is open the role is unknown until the join response;
   // a stale persisted role from a different session must not apply.
   const [myRole, setMyRole] = useState<'a' | 'b' | null>(() => {
-    if (urlSessionId) return null;
+    if (urlSessionId || urlCode) return null;
     return persistedSession?.role ?? null;
   });
 
@@ -340,21 +358,25 @@ function App() {
     }
   };
 
-  const sessionShareUrl = (sessionId: string) =>
-    `${window.location.origin}${window.location.pathname}?session=${sessionId}`;
+  // Share the human-friendly code when we have one; legacy persisted sessions
+  // without a code fall back to the UUID link (both invite forms are accepted).
+  const sessionShareUrl = (s: ClientSession) =>
+    s.code
+      ? `${window.location.origin}${window.location.pathname}?code=${encodeURIComponent(s.code)}`
+      : `${window.location.origin}${window.location.pathname}?session=${s.sessionId}`;
 
   const handleShare = async () => {
     if (sessionState === 'local') {
       try {
         setSessionState('joining');
-        const { id } = await createSession();
+        const { id, code } = await createSession();
         const res = await joinSession(id, userNameA || 'User A', selectedCityA);
-        const newSession: ClientSession = { sessionId: id, peerId: res.peerId, role: res.role };
+        const newSession: ClientSession = { sessionId: id, peerId: res.peerId, role: res.role, code };
         persistSession(newSession);
         setMyRole(newSession.role);
         setSession(newSession);
         setConnection(createConnection(sync, newSession));
-        await copyToClipboard(sessionShareUrl(id));
+        await copyToClipboard(sessionShareUrl(newSession));
       } catch (err) {
         if (err instanceof ApiError && err.status === null) {
           // Backend genuinely unreachable — fall back to the old local share
@@ -373,17 +395,27 @@ function App() {
       }
     } else {
       // Already in a session — re-share the same session link.
-      if (session) await copyToClipboard(sessionShareUrl(session.sessionId));
+      if (session) await copyToClipboard(sessionShareUrl(session));
     }
   };
 
-  // Invitee join: User B opens ?session=<id>, enters identity, joins, connects.
+  // Invitee join: User B opens ?session=<id> or ?code=<code>, enters identity,
+  // joins, connects. Joining via code returns the session id so the persisted
+  // session and reconnect use the UUID internally.
   const handleJoin = async () => {
-    if (!urlSessionId) return;
+    if (!urlSessionId && !urlCode) return;
     setSessionError(null);
     try {
-      const res = await joinSession(urlSessionId, userNameB || 'User B', selectedCityB);
-      const newSession: ClientSession = { sessionId: urlSessionId, peerId: res.peerId, role: res.role };
+      const res = urlCode
+        ? await joinSessionByCode(urlCode, userNameB || 'User B', selectedCityB)
+        : await joinSession(urlSessionId!, userNameB || 'User B', selectedCityB);
+      const sessionId = urlCode ? res.sessionId! : urlSessionId!;
+      const newSession: ClientSession = {
+        sessionId,
+        peerId: res.peerId,
+        role: res.role,
+        code: urlCode ?? undefined
+      };
       persistSession(newSession);
       // Strip the invite param so a reload reconnects via the persisted
       // session instead of re-joining (which would answer 409 session full).
@@ -542,7 +574,9 @@ function App() {
       {/* Main dashboard body */}
       <main className="app-container">
         {/* Invitee join panel */}
-        {sessionState === 'joining' && urlSessionId && connection.mode === 'local' && (
+        {sessionState === 'joining' &&
+          (urlSessionId || urlCode) &&
+          connection.mode === 'local' && (
           <section className="glass-panel" style={{ borderColor: 'var(--border-glow)' }}>
             <h2 style={{ fontSize: '20px', marginBottom: '8px' }}>
               You've been invited to a live session

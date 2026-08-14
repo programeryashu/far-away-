@@ -3,6 +3,12 @@ export interface ClientSession {
   peerId: string;
   role: 'a' | 'b';
   /**
+   * Human-friendly share code (from the create-session response). Persisted so
+   * a reload can re-share the same short link; absent for legacy sessions that
+   * predate code sharing, which fall back to the session UUID.
+   */
+  code?: string;
+  /**
    * Last server session event seq this client applied. Session metadata only
    * (never sent to the server as authoritative) — it lets a reconnect resume
    * replay from where this device left off.
@@ -41,6 +47,7 @@ function isClientSession(value: unknown): value is ClientSession {
     typeof v.sessionId === 'string' &&
     typeof v.peerId === 'string' &&
     (v.role === 'a' || v.role === 'b') &&
+    (v.code === undefined || typeof v.code === 'string') &&
     (v.lastAppliedEventSeq === undefined ||
       (typeof v.lastAppliedEventSeq === 'number' && v.lastAppliedEventSeq >= 0))
   );

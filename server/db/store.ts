@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import fs from "node:fs";
-import { migrations, type Session, type Peer, type Message, type CanvasSnapshot, type TimerState, type SessionEvent } from "./schema.js";
+import { migrations, type Session, type Peer, type Message, type CanvasSnapshot, type TimerState, type CinemaState, type SessionEvent } from "./schema.js";
 
 export class Store {
   private db: DatabaseSync;
@@ -242,6 +242,30 @@ export class Store {
     return row ?? null;
   }
 
+  // Cinema methods — the shared watch's only state is play/pause, persisted
+  // so a fresh joiner inherits it from the authoritative snapshot (the event
+  // log alone cannot restore it for an afterSeq=0 client).
+  upsertCinemaState(sessionId: string, playing: boolean) {
+    this.db
+      .prepare(
+        "INSERT INTO cinema_state (session_id, playing, updated_at) VALUES (?, ?, ?) " +
+          "ON CONFLICT(session_id) DO UPDATE SET playing = excluded.playing, updated_at = excluded.updated_at",
+      )
+      .run(sessionId, playing ? 1 : 0, Date.now());
+  }
+
+  getCinemaState(sessionId: string): CinemaState | null {
+    // SQLite stores the boolean as 1/0 — the raw row is read with a numeric
+    // playing so the normalization below is intentional, then mapped to the
+    // boolean the schema and the rest of the app expect.
+    const row = this.db
+      .prepare("SELECT session_id, playing, updated_at FROM cinema_state WHERE session_id = ?")
+      .get(sessionId) as unknown as
+      | { session_id: string; playing: number; updated_at: number }
+      | undefined;
+    return row ? { session_id: row.session_id, playing: row.playing === 1, updated_at: row.updated_at } : null;
+  }
+
   // Identity
   updatePeerIdentity(id: string, displayName: string, cityJson: string) {
     this.db
@@ -338,7 +362,8 @@ export class Store {
     const messages = this.getMessages(sessionId);
     const canvas = this.getCanvasSnapshot(sessionId);
     const timer = this.getTimerState(sessionId);
-    return { session, peers, messages, canvas, timer };
+    const cinema = this.getCinemaState(sessionId);
+    return { session, peers, messages, canvas, timer, cinema };
   }
 
   close() {

@@ -114,6 +114,21 @@ describe('ActivityFinder', () => {
     );
   });
 
+  it('a fresh joiner inherits an already-running cinema from the state snapshot', () => {
+    const { emit } = renderFinder();
+    // The authoritative snapshot (an afterSeq 0 join) carries the persisted
+    // cinema row — the cinema event itself is never replayed to such a client.
+    emit(
+      makeEnvelope({
+        event: 'state',
+        payload: { cinema: { session_id: 's1', playing: true, updated_at: 1 } },
+      }) as unknown as ServerEnvelope,
+    );
+    // Opening SynchroCinema shows the shared watch already playing.
+    fireEvent.click(screen.getAllByText('Initialize Session')[0]); // SynchroCinema
+    expect(screen.getByRole('button', { name: 'Pause playback' })).toBeTruthy();
+  });
+
   it('sends a cinema toggle exactly once per click and mirrors the peer', () => {
     const { conn, emit } = renderFinder();
     fireEvent.click(screen.getAllByText('Initialize Session')[0]); // SynchroCinema

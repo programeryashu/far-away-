@@ -563,10 +563,19 @@ describe("WebSocket", () => {
     const wsB3 = new WebSocket(wsUrl(id, peerB));
     await waitForEvent(wsB3, "connected");
     const stateEvent = await requestState(wsB3, id, peerB);
-    const sp = stateEvent?.payload as { snapshotSeq?: number; messages?: unknown[]; peers?: unknown[] };
+    const sp = stateEvent?.payload as {
+      snapshotSeq?: number;
+      messages?: unknown[];
+      peers?: unknown[];
+      cinema?: { playing: boolean } | null;
+    };
     expect(sp.snapshotSeq).toBe(7);
     expect(sp.messages).toHaveLength(2);
     expect(sp.peers).toHaveLength(2);
+    // Regression: a brand-new joiner (afterSeq 0) inherits the already-running
+    // shared watch from the authoritative snapshot — the cinema event itself
+    // is never replayed to a zero-based client.
+    expect(sp.cinema?.playing).toBe(true);
     expect((sp.peers as { role: string; display_name: string }[]).find((p) => p.role === "a")?.display_name).toBe("Alicia");
 
     wsA.close();

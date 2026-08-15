@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Video, Paintbrush, Coffee, CloudRain, Play, Pause, RotateCcw, X, Users } from 'lucide-react';
 import type { TimerPayload } from '../lib/broadcast';
 import type { Connection } from '../lib/connection';
-import { parseCanvasStrokes, parseTimerState } from '../lib/reconcile';
+import { parseCanvasStrokes, parseCinemaState, parseTimerState } from '../lib/reconcile';
 import { CINEMA_EVENT, type CinemaPayload } from '../../shared/protocol';
 
 /**
@@ -297,6 +297,14 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
         }
         const timer = parseTimerState(env.payload.timer);
         if (timer) applyTimer(timer);
+        // Inherit an already-running shared watch: the snapshot is the only
+        // way an afterSeq=0 joiner learns the cinema state (the event itself
+        // is never replayed to it). No log line — no peer action happened.
+        const cinema = parseCinemaState(env.payload.cinema);
+        if (cinema) {
+          setIsPlaying(cinema.playing);
+          setSyncStatus('Synced');
+        }
       }
     });
   }, [connection, redrawAll, applyTimer, peerName]);

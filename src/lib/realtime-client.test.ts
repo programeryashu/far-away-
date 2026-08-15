@@ -64,6 +64,7 @@ const stateFrame = (snapshotSeq: number) =>
     messages: [],
     canvas: null,
     timer: null,
+    cinema: null,
     snapshotSeq,
   });
 

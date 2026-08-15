@@ -117,6 +117,7 @@ const stateFrame = (opts: { snapshotSeq?: number; messages?: ServerMessage[]; pe
     messages: opts.messages ?? [],
     canvas: null,
     timer: null,
+    cinema: null,
     snapshotSeq: opts.snapshotSeq ?? 0,
   });
 

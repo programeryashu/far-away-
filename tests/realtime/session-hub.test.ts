@@ -24,6 +24,7 @@ describe("SessionHub", () => {
     getNextSequence: vi.fn().mockReturnValue(1),
     addMessage: vi.fn(),
     upsertTimerState: vi.fn(),
+    upsertCinemaState: vi.fn(),
     updatePeerIdentity: vi.fn(),
     updateCanvasSnapshot: vi.fn(),
     getCanvasSnapshot: vi.fn().mockReturnValue(null),
@@ -36,6 +37,7 @@ describe("SessionHub", () => {
       messages: [],
       canvas: null,
       timer: null,
+      cinema: null,
     }),
   };
   Object.assign(mockFastify, { store: mockStore });

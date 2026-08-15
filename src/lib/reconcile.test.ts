@@ -4,6 +4,7 @@ import {
   mergeMessages,
   otherPeers,
   parseCanvasStrokes,
+  parseCinemaState,
   parseTimerState,
   peerIdentity,
   serverMessagesToClient,
@@ -162,5 +163,20 @@ describe("parseTimerState", () => {
 
   it("returns null when there is no persisted timer", () => {
     expect(parseTimerState(null)).toBeNull();
+  });
+});
+
+describe("parseCinemaState", () => {
+  it("maps a persisted cinema row to a live payload", () => {
+    expect(
+      parseCinemaState({ session_id: "s1", playing: true, updated_at: 1 }),
+    ).toEqual({ playing: true });
+    expect(
+      parseCinemaState({ session_id: "s1", playing: false, updated_at: 1 }),
+    ).toEqual({ playing: false });
+  });
+
+  it("returns null when there is no persisted cinema", () => {
+    expect(parseCinemaState(null)).toBeNull();
   });
 });

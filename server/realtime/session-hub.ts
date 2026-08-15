@@ -174,6 +174,9 @@ export class SessionHub {
       case CINEMA_EVENT: {
         const seq = this.logEvent(record.sessionId, CINEMA_EVENT, envelope.payload);
         if (seq === null) break;
+        // Persist the current play/pause so a fresh joiner (afterSeq 0, who
+        // never replays the event) inherits it from the state snapshot.
+        this.fastify.store.upsertCinemaState(record.sessionId, envelope.payload.playing);
         this.broadcastToSession(
           record.sessionId,
           { event: CINEMA_EVENT, payload: envelope.payload, seq },
@@ -355,6 +358,7 @@ export class SessionHub {
         messages: state.messages,
         canvas: state.canvas,
         timer: state.timer,
+        cinema: state.cinema,
         snapshotSeq: latest,
       },
     });

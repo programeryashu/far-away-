@@ -41,6 +41,13 @@ export interface TimerState {
   updated_at: number;
 }
 
+export interface CinemaState {
+  session_id: string;
+  /** Current play/pause of the shared watch — the full cinema model. */
+  playing: boolean;
+  updated_at: number;
+}
+
 export interface SessionEvent {
   id: number;
   session_id: string;
@@ -133,6 +140,17 @@ export const migrations: Migration[] = [
       );
 
       CREATE INDEX IF NOT EXISTS idx_session_events_session_seq ON session_events(session_id, seq);
+    `,
+  },
+  {
+    id: 4,
+    name: "cinema_state",
+    sql: `
+      CREATE TABLE IF NOT EXISTS cinema_state (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+        playing INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `,
   },
 ];

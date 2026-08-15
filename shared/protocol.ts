@@ -220,12 +220,26 @@ export const StateTimerSchema = z.object({
 });
 export type StateTimer = z.infer<typeof StateTimerSchema>;
 
+/** Persisted cinema row — the shared watch's only state is play/pause. */
+export const StateCinemaSchema = z.object({
+  session_id: z.string(),
+  playing: z.boolean(),
+  updated_at: z.number(),
+});
+export type StateCinema = z.infer<typeof StateCinemaSchema>;
+
 export const StatePayloadSchema = z.object({
   session: StateSessionSchema,
   peers: z.array(StatePeerSchema),
   messages: z.array(StateMessageSchema),
   canvas: StateCanvasSchema.nullable(),
   timer: StateTimerSchema.nullable(),
+  /**
+   * Current play/pause of the shared watch. Snapshot-carried so a brand-new
+   * joiner (afterSeq 0, who never sees the cinema event in the log) inherits
+   * an already-running watch — the event log alone cannot restore it.
+   */
+  cinema: StateCinemaSchema.nullable(),
   /**
    * The last session event seq incorporated into this snapshot. The client
    * advances its lastAppliedEventSeq to this boundary (never backwards), so a

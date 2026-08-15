@@ -65,6 +65,7 @@ const validStatePayload = {
   ],
   canvas: { session_id: "s1", strokes_json: "[]", updated_at: 1 },
   timer: { session_id: "s1", action: "start", end_at: 100, remaining: 0, updated_at: 1 },
+  cinema: { session_id: "s1", playing: true, updated_at: 1 },
   snapshotSeq: 0,
 };
 
@@ -239,12 +240,13 @@ describe("server → client envelopes", () => {
     expect(parsed).not.toBeNull();
   });
 
-  it("accepts a state payload without canvas/timer rows", () => {
+  it("accepts a state payload without canvas/timer/cinema rows", () => {
     const parsed = parseServerEnvelope(
       frame("state", {
         ...validStatePayload,
         canvas: null,
         timer: null,
+        cinema: null,
       }),
     );
     expect(parsed).not.toBeNull();
@@ -262,6 +264,7 @@ describe("server → client envelopes", () => {
     ["peer-joined", { displayName: "Bob" }, "missing peerId"],
     ["peer-left", { peerId: 5 }, "non-string peerId"],
     ["state", { ...validStatePayload, timer: { action: "start", end_at: 1 } }, "partial timer row"],
+    ["state", { ...validStatePayload, cinema: { session_id: "s1", playing: "yes" } }, "cinema playing not boolean"],
     ["state", { session: validStatePayload.session, peers: "nope" }, "peers not an array"],
     ["ack", { refSeq: -1, id: "m1" }, "negative refSeq"],
     ["pong", { ts: "later" }, "non-numeric ts"],

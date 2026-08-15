@@ -108,6 +108,32 @@ describe("Store", () => {
     expect(state?.timer?.end_at).toBe(1234);
   });
 
+  it("should upsert and read cinema state with boolean normalization", () => {
+    const sessionId = "s1";
+    store.createSession(sessionId, "C1", "active", Date.now() + 1000);
+
+    // No row yet → null.
+    expect(store.getCinemaState(sessionId)).toBeNull();
+
+    store.upsertCinemaState(sessionId, true);
+    const c1 = store.getCinemaState(sessionId);
+    expect(c1?.playing).toBe(true);
+
+    // SQLite stores the boolean as 1/0; the getter must normalize it back.
+    store.upsertCinemaState(sessionId, false);
+    expect(store.getCinemaState(sessionId)?.playing).toBe(false);
+    expect(store.getCinemaState("other")).toBeNull();
+  });
+
+  it("should include cinema in session state", () => {
+    const sessionId = "s1";
+    store.createSession(sessionId, "C1", "active", Date.now() + 1000);
+    store.upsertCinemaState(sessionId, true);
+    const state = store.getSessionState(sessionId);
+    expect(state?.cinema?.playing).toBe(true);
+    expect(state?.cinema?.session_id).toBe(sessionId);
+  });
+
   it("should update a peer identity", () => {
     const sessionId = "s1";
     store.createSession(sessionId, "C1", "active", Date.now() + 1000);

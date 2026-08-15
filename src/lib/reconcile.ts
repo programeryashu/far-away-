@@ -1,5 +1,6 @@
 import { isValidCityData, type CityData } from './cities';
 import type { TimerPayload } from './broadcast';
+import type { CinemaPayload } from '../../shared/protocol';
 
 // Server-side shapes returned inside the `state` envelope / GET state payload.
 // shared/protocol.ts is the single source of truth for these shapes — the
@@ -7,6 +8,7 @@ import type { TimerPayload } from './broadcast';
 // from what the server actually produces.
 import type {
   StateCanvas as ServerCanvas,
+  StateCinema as ServerCinema,
   StateMessage as ServerMessage,
   StatePayload as ServerStatePayload,
   StatePeer as ServerPeer,
@@ -15,6 +17,7 @@ import type {
 
 export type {
   ServerCanvas,
+  ServerCinema,
   ServerMessage,
   ServerPeer,
   ServerStatePayload,
@@ -116,4 +119,10 @@ export function parseTimerState(timer: ServerTimer | null): TimerPayload | null 
     endAt: timer.end_at,
     remaining: timer.remaining,
   };
+}
+
+/** Convert the persisted cinema row into the live cinema payload a client applies. */
+export function parseCinemaState(cinema: ServerCinema | null): CinemaPayload | null {
+  if (!cinema) return null;
+  return { playing: cinema.playing };
 }

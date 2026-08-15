@@ -15,12 +15,13 @@ Element.prototype.scrollIntoView = () => {};
  */
 function createFakeConnection(role: 'a' | 'b' = 'a') {
   let eventListener: ((env: ServerEnvelope) => void) | null = null;
+  const send = vi.fn();
   const conn: Connection = {
     mode: 'remote',
     role,
     start: () => {},
     stop: () => {},
-    send: vi.fn(),
+    send,
     onEvent: (fn) => {
       eventListener = fn;
       return () => {
@@ -33,6 +34,7 @@ function createFakeConnection(role: 'a' | 'b' = 'a') {
   };
   return {
     conn,
+    send,
     emit: (env: ServerEnvelope) => act(() => eventListener?.(env)),
   };
 }
@@ -146,5 +148,71 @@ describe('ActivityFinder', () => {
 
     fireEvent.click(screen.getByText('Clear Canvas'));
     expect(conn.send).toHaveBeenCalledWith('canvas-clear', {});
+  });
+
+  it('starts the shared timer from a Start Together launch exactly once', () => {
+    const fake = createFakeConnection('a');
+    const { rerender } = render(
+      <ActivityFinder
+        nameA="Alice"
+        nameB="Bob"
+        connection={fake.conn}
+        hasPeer={false}
+        launchRequest={{ type: 'timer', durationMin: 30, nonce: 1 }}
+      />,
+    );
+
+    // The activity opens and the canonical timer action fires exactly once.
+    expect(screen.getByText('Deep Space Cafe & Focus Timer')).toBeTruthy();
+    expect(fake.conn.send).toHaveBeenCalledTimes(1);
+    expect(fake.conn.send).toHaveBeenCalledWith(
+      'timer',
+      expect.objectContaining({ action: 'start', remaining: 0 }),
+    );
+    const endAt = (fake.send.mock.calls[0][1] as { endAt: number }).endAt;
+    expect(Math.abs(endAt - (Date.now() + 30 * 60_000))).toBeLessThan(5000);
+
+    // Re-rendering the same nonce must not re-apply (exactly-once consumption).
+    rerender(
+      <ActivityFinder
+        nameA="Alice"
+        nameB="Bob"
+        connection={fake.conn}
+        hasPeer={false}
+        launchRequest={{ type: 'timer', durationMin: 30, nonce: 1 }}
+      />,
+    );
+    expect(fake.conn.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('forces cinema play from a Start Together launch exactly once', () => {
+    const fake = createFakeConnection('a');
+    render(
+      <ActivityFinder
+        nameA="Alice"
+        nameB="Bob"
+        connection={fake.conn}
+        hasPeer={false}
+        launchRequest={{ type: 'cinema', nonce: 7 }}
+      />,
+    );
+    expect(screen.getByText('SynchroCinema Control Center')).toBeTruthy();
+    expect(fake.conn.send).toHaveBeenCalledTimes(1);
+    expect(fake.conn.send).toHaveBeenCalledWith('cinema', { playing: true });
+  });
+
+  it('opens the canvas from a Start Together launch without inventing events', () => {
+    const fake = createFakeConnection('a');
+    render(
+      <ActivityFinder
+        nameA="Alice"
+        nameB="Bob"
+        connection={fake.conn}
+        hasPeer={false}
+        launchRequest={{ type: 'canvas', nonce: 3 }}
+      />,
+    );
+    expect(screen.getByText('Galactic Canvas Collaboration')).toBeTruthy();
+    expect(fake.conn.send).not.toHaveBeenCalled();
   });
 });

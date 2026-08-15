@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { cleanup, render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import App from './App';
 import { FALLBACK_CITIES } from './lib/cities';
+import { clearMomentCache } from './lib/moment';
 import type { ServerMessage, ServerPeer } from './lib/reconcile';
 
 // ---- mock the REST api so tests never touch fetch ----
@@ -32,6 +33,16 @@ vi.mock('./lib/api', () => ({
   joinSessionByCode: api.joinSessionByCode,
   leaveSession: api.leaveSession,
 }));
+
+// ---- mock the Shared Moment recommendation fetch (kept pending by default) ----
+const momentApi = vi.hoisted(() => ({
+  requestMomentRecommendation: vi.fn(),
+}));
+
+vi.mock('./lib/moment', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./lib/moment')>();
+  return { ...actual, requestMomentRecommendation: momentApi.requestMomentRecommendation };
+});
 
 // ---- Fake WebSocket so the real RemoteConnection/RealtimeClient run in test ----
 
@@ -125,12 +136,16 @@ describe('App session state machine', () => {
     api.joinSession.mockReset();
     api.joinSessionByCode.mockReset();
     api.leaveSession.mockReset();
+    clearMomentCache();
+    // Shared Moment requests stay pending unless a test resolves one.
+    momentApi.requestMomentRecommendation.mockImplementation(() => new Promise<never>(() => {}));
   });
 
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    momentApi.requestMomentRecommendation.mockReset();
   });
 
   it('renders local mode by default with no leave button', () => {
@@ -441,5 +456,37 @@ describe('App session state machine', () => {
     // History replay containing our own message (same id) must not duplicate it.
     act(() => lastWs().emit(chatFrame(chat!.payload.id as string, 'hi there', 1, 'Bob')));
     await waitFor(() => expect(screen.getAllByText('hi there')).toHaveLength(1));
+  });
+
+  it('starts a recommended shared activity via Shared Moment Start Together', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-16T01:00:00Z'));
+    momentApi.requestMomentRecommendation.mockResolvedValue({
+      source: 'deterministic',
+      recommendation: {
+        activity: 'timer',
+        durationMinutes: 45,
+        title: 'Focus together',
+        explanation: 'A comfortable overlap — run a shared focus session.',
+      },
+    });
+
+    render(<App />);
+    // The deterministic facts render instantly; flush the recommendation.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /start together/i }));
+    // Flush the launch effect that opens the activity and starts the timer.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The existing realtime system (not a special AI transport) executed it:
+    // the shared focus timer opened with a running countdown.
+    expect(screen.getByText('Deep Space Cafe & Focus Timer')).toBeTruthy();
+    expect(screen.getByText(/shared focus session started on your device/i)).toBeTruthy();
   });
 });

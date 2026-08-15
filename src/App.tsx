@@ -4,9 +4,10 @@ import { DistanceVisualizer } from './components/DistanceVisualizer';
 import { TimezoneSync } from './components/TimezoneSync';
 import { LiveWindow } from './components/LiveWindow';
 import { PingMeter } from './components/PingMeter';
-import { ActivityFinder } from './components/ActivityFinder';
+import { ActivityFinder, type ActivityLaunch } from './components/ActivityFinder';
+import { SharedMoment, type MomentLaunch } from './components/SharedMoment';
 import { ChatBox } from './components/ChatBox';
-import { Globe, Heart, Share2, Check, LogOut } from 'lucide-react';
+import { Heart, Share2, Check, LogOut } from 'lucide-react';
 import { FALLBACK_CITIES, type CityData } from './lib/cities';
 import { buildShareUrl, isValidConnectionState, parseShareUrl, type ConnectionState } from './lib/share';
 import { OrbitSync } from './lib/broadcast';
@@ -107,6 +108,9 @@ function App() {
   const [copied, setCopied] = useState(false);
   const [manualCopyUrl, setManualCopyUrl] = useState<string | null>(null);
   const copyTimerRef = useRef<number | null>(null);
+  // Shared Moment → activity launch (Start Together). Consumed once by
+  // ActivityFinder; chat launches scroll to the conversation instead.
+  const [launchRequest, setLaunchRequest] = useState<ActivityLaunch | null>(null);
 
   // Live-tab sync: one OrbitSync for the app lifetime. It must run in EVERY
   // mode (local two-tab mode, and as an idle fallback during a session) so the
@@ -375,6 +379,7 @@ function App() {
         persistSession(newSession);
         setMyRole(newSession.role);
         setSession(newSession);
+        setLaunchRequest(null);
         setConnection(createConnection(sync, newSession));
         await copyToClipboard(sessionShareUrl(newSession));
       } catch (err) {
@@ -422,12 +427,27 @@ function App() {
       window.history.replaceState(null, '', window.location.pathname);
       setMyRole(newSession.role);
       setSession(newSession);
+      setLaunchRequest(null);
       setConnection(createConnection(sync, newSession));
     } catch (err) {
       setSessionState('error');
       setSessionError(friendlySessionError(err));
     }
   };
+
+  // Shared Moment's Start Together: chat scrolls to the conversation, every
+  // other activity runs through the existing realtime system via ActivityFinder.
+  const handleMomentLaunch = useCallback((launch: MomentLaunch) => {
+    if (launch.type === 'chat') {
+      document.getElementById('chat-box')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    setLaunchRequest({
+      type: launch.type,
+      durationMin: launch.durationMin,
+      nonce: Date.now()
+    });
+  }, []);
 
   // Leave: stop the remote connection, clear session state, return to local
   // mode. Local names/cities and other app data are untouched.
@@ -453,6 +473,7 @@ function App() {
     setMyRole(null);
     setHasRemotePeer(false);
     setSessionError(null);
+    setLaunchRequest(null);
     setSessionState('local');
     // Back to the BroadcastChannel transport; the wiring effect stops the
     // old remote connection and starts this one.
@@ -480,87 +501,61 @@ function App() {
 
   return (
     <div id="root">
-      {/* Header section with brand info */}
-      <header style={{ borderBottom: '1px solid var(--border-glass)', background: 'rgba(7, 9, 19, 0.4)', backdropFilter: 'blur(8px)', padding: '20px 0', position: 'sticky', top: 0, zIndex: 50 }}>
+      <a href="#main" className="skip-link">
+        Skip to content
+      </a>
+      {/* Header — quiet wordmark, live status, two actions */}
+      <header style={{ borderBottom: '1px solid var(--border-glass)', background: 'rgba(11, 11, 15, 0.82)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)', padding: '14px 0', position: 'sticky', top: 0, zIndex: 50 }}>
         <div
           style={{
-            maxWidth: '1280px',
+            maxWidth: '1080px',
             margin: '0 auto',
             padding: '0 24px',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between'
+            justifyContent: 'space-between',
+            gap: '16px'
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div
-              style={{
-                background: 'linear-gradient(135deg, var(--primary), var(--secondary))',
-                width: '40px',
-                height: '40px',
-                borderRadius: 'var(--radius-sm)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 0 15px rgba(99, 102, 241, 0.4)'
-              }}
-            >
-              <Globe size={22} color="white" />
-            </div>
-            <div>
-              <h1
-                style={{
-                  fontSize: '22px',
-                  fontWeight: 800,
-                  background: 'linear-gradient(to right, #ffffff, #c7d2fe)',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                  margin: 0,
-                  letterSpacing: '-0.02em'
-                }}
-              >
-                Orbit
-              </h1>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                Live time is the only time. Make the most of it.
-              </p>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '20px', minWidth: 0 }}>
+            <h1 style={{ fontSize: '17px', fontWeight: 650, margin: 0, letterSpacing: '-0.02em' }}>
+              Orbit
+            </h1>
             <span
               className="badge"
               style={{
-                fontSize: '11px',
                 borderColor: statusColor,
                 color: statusColor,
                 animation:
                   sessionState === 'joining' || sessionState === 'reconnecting'
-                    ? 'pulse-glow 1.5s infinite ease-in-out'
+                    ? 'pulse-soft 1.6s ease-in-out infinite'
                     : 'none'
               }}
               aria-live="polite"
             >
               {sessionStatusLabel[sessionState]}
             </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {sessionState !== 'local' && (
               <button
                 onClick={handleLeave}
                 className="btn btn-outline"
-                style={{ padding: '8px 14px', fontSize: '12px', gap: '6px', borderRadius: 'var(--radius-sm)' }}
+                style={{ padding: '7px 12px', fontSize: '13px', gap: '6px' }}
                 aria-label="Leave the current session and return to local mode"
               >
-                <LogOut size={14} color="var(--text-secondary)" />
+                <LogOut size={14} />
                 Leave
               </button>
             )}
             <button
               onClick={handleShare}
-              className="btn btn-outline"
-              style={{ padding: '8px 14px', fontSize: '12px', gap: '6px', borderRadius: 'var(--radius-sm)' }}
+              className="btn btn-primary"
+              style={{ padding: '7px 12px', fontSize: '13px', gap: '6px' }}
               aria-label="Copy shareable connection link"
             >
-              {copied ? <Check size={14} color="var(--accent)" /> : <Share2 size={14} color="var(--text-secondary)" />}
+              {copied ? <Check size={14} /> : <Share2 size={14} />}
               {copied ? 'Copied!' : 'Share Connection'}
             </button>
           </div>
@@ -578,7 +573,7 @@ function App() {
       )}
 
       {/* Main dashboard body */}
-      <main className="app-container">
+      <main className="app-container" id="main">
         {/* Invitee join panel */}
         {sessionState === 'joining' &&
           (urlSessionId || urlCode) &&
@@ -617,24 +612,6 @@ function App() {
             </button>
           </section>
         )}
-
-        {/* Intro Hero Section */}
-        <section
-          style={{
-            textAlign: 'center',
-            padding: '40px 20px',
-            borderRadius: 'var(--radius-lg)',
-            background: 'radial-gradient(ellipse at center, rgba(99, 102, 241, 0.08) 0%, transparent 70%)',
-            border: '1px solid rgba(255, 255, 255, 0.02)'
-          }}
-        >
-          <h2 style={{ fontSize: '32px', fontWeight: 800, letterSpacing: '-0.03em', marginBottom: '12px' }}>
-            Distance is not a place. It's a <span style={{ color: 'var(--primary)' }}>clock</span>.
-          </h2>
-          <p style={{ maxWidth: '600px', margin: '0 auto', fontSize: '15px' }}>
-            Orbit turns the delay, the distance, and the timezone between two people into a live, measurable window — and helps you spend it together before it ends.
-          </p>
-        </section>
 
         {/* Node Location Configurations */}
         <section className="dashboard-grid">
@@ -680,6 +657,23 @@ function App() {
           />
         </section>
 
+        {/* Shared Moment: deterministic facts + recommended activity to do
+            together, launched through the existing realtime system. Keyed by
+            session so the recommendation and started-state reset on leave. */}
+        <section>
+          <SharedMoment
+            key={session?.sessionId ?? 'local'}
+            cityA={selectedCityA}
+            cityB={selectedCityB}
+            nameA={userNameA}
+            nameB={userNameB}
+            hasPeer={hasRemotePeer}
+            sessionKey={session?.sessionId ?? 'local'}
+            session={session ? { sessionId: session.sessionId, peerId: session.peerId } : null}
+            onLaunch={handleMomentLaunch}
+          />
+        </section>
+
         {/* Ping the light: measured round-trip over the active transport */}
         <section>
           <PingMeter connection={connection} hasPeer={hasRemotePeer} />
@@ -719,6 +713,7 @@ function App() {
             nameB={userNameB}
             connection={connection}
             hasPeer={hasRemotePeer}
+            launchRequest={launchRequest}
           />
         </section>
       </main>

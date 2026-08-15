@@ -7,6 +7,7 @@ import { makeEnvelope } from "../shared/protocol.js";
 import { envSchema, type EnvConfig } from "./config.js";
 import { healthRoutes } from "./routes/health.js";
 import { sessionRoutes } from "./routes/sessions.js";
+import { sharedMomentRoutes } from "./routes/shared-moment.js";
 import { Store } from "./db/store.js";
 import { SessionHub } from "./realtime/session-hub.js";
 
@@ -48,6 +49,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await fastify.register(healthRoutes);
   await fastify.register(sessionRoutes);
+  await fastify.register(sharedMomentRoutes);
 
   fastify.get("/ws", { websocket: true }, (socket, request) => {
     const query = z

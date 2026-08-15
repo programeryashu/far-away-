@@ -1,9 +1,21 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Sparkles, Video, Paintbrush, Coffee, Play, Pause, RotateCcw, X, Users } from 'lucide-react';
+import { Video, Paintbrush, Coffee, CloudRain, Play, Pause, RotateCcw, X, Users } from 'lucide-react';
 import type { TimerPayload } from '../lib/broadcast';
 import type { Connection } from '../lib/connection';
 import { parseCanvasStrokes, parseTimerState } from '../lib/reconcile';
 import { CINEMA_EVENT, type CinemaPayload } from '../../shared/protocol';
+
+/**
+ * A shared-activity launch command, e.g. from Shared Moment's Start Together.
+ * The launched activity runs through the exact same canonical path as the UI
+ * buttons — one realtime send, same persistence/replay semantics.
+ */
+export interface ActivityLaunch {
+  type: 'timer' | 'cinema' | 'canvas';
+  durationMin?: number;
+  /** Monotonic marker so the same command is consumed exactly once. */
+  nonce: number;
+}
 
 interface ActivityFinderProps {
   nameA: string;
@@ -12,6 +24,8 @@ interface ActivityFinderProps {
   connection: Connection;
   /** True when a second peer is connected right now. */
   hasPeer: boolean;
+  /** Pending shared-activity launch (Start Together); consumed once. */
+  launchRequest?: ActivityLaunch | null;
 }
 
 interface Activity {
@@ -19,8 +33,6 @@ interface Activity {
   title: string;
   desc: string;
   icon: React.ReactNode;
-  category: 'watch' | 'play' | 'talk';
-  suitability: 'High' | 'Medium' | 'Low';
 }
 
 interface Point {
@@ -83,7 +95,8 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
   nameA,
   nameB,
   connection,
-  hasPeer
+  hasPeer,
+  launchRequest = null
 }) => {
   const [activeModal, setActiveModal] = useState<string | null>(null);
 
@@ -136,22 +149,29 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
       setSecondsLeft(remaining);
       if (remaining <= 0) {
         setIsRunning(false);
-        setSessionLogs(prev => ['Session complete — take a break! ☕', ...prev]);
+        setSessionLogs(prev => ['Session complete — take a break.', ...prev]);
       }
     }, 250);
     return () => window.clearInterval(interval);
   }, [isRunning]);
 
-  const sendTimer = (payload: TimerPayload) => {
+  const sendTimer = useCallback((payload: TimerPayload) => {
     connection.send('timer', payload);
-  };
+  }, [connection]);
 
-  const handleStartTimer = () => {
+  // Start the shared countdown from an explicit duration (used by Start
+  // Together) or from the current position; always exactly one send, the same
+  // canonical path as the Start button.
+  const startTimerWithSeconds = useCallback((totalSeconds: number) => {
     const now = new Date().getTime();
-    endAtRef.current = now + (secondsLeft <= 0 ? FOCUS_SECONDS : secondsLeft) * 1000;
+    endAtRef.current = now + totalSeconds * 1000;
     setSecondsLeft(Math.max(0, Math.round((endAtRef.current - now) / 1000)));
     setIsRunning(true);
     sendTimer({ action: 'start', endAt: endAtRef.current, remaining: 0 });
+  }, [sendTimer]);
+
+  const handleStartTimer = () => {
+    startTimerWithSeconds(secondsLeft <= 0 ? FOCUS_SECONDS : secondsLeft);
   };
 
   const handlePauseTimer = () => {
@@ -171,17 +191,17 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
   // ------------------------------------
   // Cinema Simulation logic
   // ------------------------------------
-  const handleCinemaToggle = () => {
-    const nextState = !isPlaying;
-    setIsPlaying(nextState);
-    setSyncStatus('Syncing...');
+  // Single play/pause path: the toggle flips, Start Together forces play.
+  const applyCinemaPlaying = useCallback((playing: boolean) => {
+    setIsPlaying(playing);
+    setSyncStatus('Syncing…');
 
     // Add user action log
-    const userLog = `${ownName} ${nextState ? 'pressed PLAY' : 'pressed PAUSE'}`;
+    const userLog = `${ownName} ${playing ? 'pressed PLAY' : 'pressed PAUSE'}`;
     setCinemaLogs(prev => [userLog, ...prev]);
 
     // A real peer mirrors the toggle over the active transport.
-    connection.send(CINEMA_EVENT, { playing: nextState } satisfies CinemaPayload);
+    connection.send(CINEMA_EVENT, { playing } satisfies CinemaPayload);
 
     cinemaTimerRef.current = window.setTimeout(() => {
       setSyncStatus('Synced');
@@ -190,6 +210,10 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
         setCinemaLogs(prev => [partnerLog, ...prev]);
       }
     }, 1000);
+  }, [ownName, connection, hasPeer, peerName]);
+
+  const handleCinemaToggle = () => {
+    applyCinemaPlaying(!isPlaying);
   };
 
   // ------------------------------------
@@ -277,6 +301,35 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
     });
   }, [connection, redrawAll, applyTimer, peerName]);
 
+  // One place that turns a launch into activity state. Stable so the launch
+  // effect below only depends on the request itself.
+  const performLaunch = useCallback(
+    (launch: ActivityLaunch) => {
+      if (launch.type === 'timer') {
+        startTimerWithSeconds((launch.durationMin ?? 45) * 60);
+        setActiveModal('cafe');
+      } else if (launch.type === 'cinema') {
+        applyCinemaPlaying(true);
+        setActiveModal('cinema');
+      } else if (launch.type === 'canvas') {
+        setActiveModal('canvas');
+      }
+    },
+    [startTimerWithSeconds, applyCinemaPlaying]
+  );
+
+  // Start Together: a launch command (from Shared Moment) opens the matching
+  // activity and runs the exact same canonical action as the UI buttons — one
+  // send, same persistence/replay path. The nonce guard makes consumption
+  // idempotent across re-renders.
+  const consumedLaunchRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!launchRequest) return;
+    if (consumedLaunchRef.current === launchRequest.nonce) return;
+    consumedLaunchRef.current = launchRequest.nonce;
+    performLaunch(launchRequest);
+  }, [launchRequest, performLaunch]);
+
   // Size the canvas bitmap to match its rendered CSS box on mount + resize
   useEffect(() => {
     if (activeModal !== 'canvas') return;
@@ -337,13 +390,13 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
     // only — a real peer draws back over the active transport.
     if (!hasPeer && connection.mode === 'local' && canvasLogs.length === 0) {
       setPartnerDrawing(true);
-      setCanvasLogs(prev => [`${nameB || 'User B'} is drawing back...`, ...prev]);
+      setCanvasLogs(prev => [`${nameB || 'User B'} is drawing…`, ...prev]);
 
       partnerDrawTimerRef.current = window.setTimeout(() => {
         strokesRef.current = [...strokesRef.current, ...buildHeartStrokes(250, 100)];
         redrawAll();
         setPartnerDrawing(false);
-        setCanvasLogs(prev => [`${nameB || 'User B'} drew a glowing heart! ❤️`, ...prev]);
+        setCanvasLogs(prev => [`${nameB || 'User B'} drew a heart`, ...prev]);
       }, 1500);
     }
   };
@@ -360,37 +413,30 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
     {
       id: 'cinema',
       title: 'SynchroCinema',
-      desc: 'Watch movies, shows, or trailers with perfectly synchronized playback and reaction logs.',
-      icon: <Video size={20} color="var(--primary)" />,
-      category: 'watch',
-      suitability: 'High'
+      desc: 'Watch together with synchronized playback and shared reaction logs.',
+      icon: <Video size={18} color="var(--text-secondary)" />
     },
     {
       id: 'canvas',
       title: 'Galactic Canvas',
-      desc: 'A shared whiteboard space. Sketch together across orbits, featuring real-time response ticks.',
-      icon: <Paintbrush size={20} color="var(--secondary)" />,
-      category: 'play',
-      suitability: 'High'
+      desc: 'A shared whiteboard — sketch together and see strokes arrive live.',
+      icon: <Paintbrush size={18} color="var(--text-secondary)" />
     },
     {
       id: 'cafe',
       title: 'Deep Space Coffee',
-      desc: 'Ambient cafe noise generator mixed with shared timers for reading, coding, or studying.',
-      icon: <Coffee size={20} color="var(--accent)" />,
-      category: 'talk',
-      suitability: 'Medium'
+      desc: 'Ambient soundscape mixed with a shared focus timer.',
+      icon: <Coffee size={18} color="var(--text-secondary)" />
     }
   ];
 
   return (
     <div id="activity-center" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      <h2 style={{ fontSize: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <Sparkles size={22} color="var(--secondary)" />
-        Synchronized Shared Experiences
+      <h2 style={{ fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        Shared Activities
       </h2>
       <p style={{ fontSize: '14px' }}>
-        Trigger direct connection points that bridge spatial boundaries using interactive simulation.
+        Cinema, canvas, and a shared focus timer — synced between you.
       </p>
 
       {/* Activities Grid */}
@@ -412,11 +458,8 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
             <div className="flex-between">
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 {act.icon}
-                <h4 style={{ fontSize: '16px', color: 'white' }}>{act.title}</h4>
+                <h4 style={{ fontSize: '15px' }}>{act.title}</h4>
               </div>
-              <span className="badge badge-primary" style={{ fontSize: '10px' }}>
-                Fit: {act.suitability}
-              </span>
             </div>
             <p style={{ fontSize: '13px' }}>{act.desc}</p>
             <button
@@ -439,31 +482,16 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
       {/* SynchroCinema Modal */}
       {/* ---------------------------------------------------- */}
       {activeModal === 'cinema' && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0,0,0,0.85)',
-            backdropFilter: 'blur(10px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 100,
-            padding: '20px'
-          }}
-        >
+        <div className="modal-overlay">
           <div
-            className="glass-panel"
+            className="glass-panel modal-panel"
             style={{
               maxWidth: '600px',
               width: '100%',
               display: 'flex',
               flexDirection: 'column',
               gap: '16px',
-              boxShadow: '0 25px 50px -12px rgba(99,102,241,0.5)'
+              boxShadow: 'var(--shadow-pop)'
             }}
           >
             <div className="flex-between">
@@ -477,9 +505,10 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                   setActiveModal(null);
                   setIsPlaying(false);
                 }}
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+                className="modal-close"
+                aria-label="Close SynchroCinema"
               >
-                <X size={20} />
+                <X size={18} />
               </button>
             </div>
 
@@ -499,7 +528,6 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                 overflow: 'hidden'
               }}
             >
-              {/* Fake Video Content */}
               <div
                 style={{
                   position: 'absolute',
@@ -508,29 +536,13 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                   width: '100%',
                   height: '100%',
                   backgroundImage: 'linear-gradient(to bottom, #111827, #030712)',
-                  opacity: 0.8,
                   zIndex: 0
                 }}
               ></div>
 
-              {/* Glowing Nebula Visuals when playing */}
-              {isPlaying && (
-                <div
-                  className="animate-pulse-glow"
-                  style={{
-                    position: 'absolute',
-                    width: '180px',
-                    height: '180px',
-                    borderRadius: '50%',
-                    background: 'radial-gradient(circle, rgba(99,102,241,0.4) 0%, transparent 70%)',
-                    zIndex: 1
-                  }}
-                ></div>
-              )}
-
               <div style={{ zIndex: 2, textAlign: 'center' }}>
                 <span style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>
-                  NOW STREAMING
+                  Now streaming
                 </span>
                 <h4 style={{ fontSize: '18px', marginBottom: '16px' }}>Exploring the Far Reaches (Trailer)</h4>
 
@@ -546,6 +558,7 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                     justifyContent: 'center',
                     padding: 0
                   }}
+                  aria-label={isPlaying ? 'Pause playback' : 'Play playback'}
                 >
                   {isPlaying ? <Pause size={24} /> : <Play size={24} style={{ marginLeft: '4px' }} />}
                 </button>
@@ -568,7 +581,7 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
               >
                 <span style={{ fontSize: '11px', fontFamily: 'monospace' }}>02:45 / 03:00</span>
                 <span style={{ fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <Users size={12} /> Sync Status: <span style={{ color: 'var(--accent)' }}>{syncStatus}</span>
+                  <Users size={12} /> Sync: <span style={{ color: 'var(--accent)' }}>{syncStatus}</span>
                 </span>
               </div>
             </div>
@@ -606,31 +619,16 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
       {/* Galactic Canvas Modal */}
       {/* ---------------------------------------------------- */}
       {activeModal === 'canvas' && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0,0,0,0.85)',
-            backdropFilter: 'blur(10px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 100,
-            padding: '20px'
-          }}
-        >
+        <div className="modal-overlay">
           <div
-            className="glass-panel"
+            className="glass-panel modal-panel"
             style={{
               maxWidth: '540px',
               width: '100%',
               display: 'flex',
               flexDirection: 'column',
               gap: '16px',
-              boxShadow: '0 25px 50px -12px rgba(236,72,153,0.5)'
+              boxShadow: 'var(--shadow-pop)'
             }}
           >
             <div className="flex-between">
@@ -643,9 +641,10 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                   if (partnerDrawTimerRef.current !== null) window.clearTimeout(partnerDrawTimerRef.current);
                   setActiveModal(null);
                 }}
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+                className="modal-close"
+                aria-label="Close Galactic Canvas"
               >
-                <X size={20} />
+                <X size={18} />
               </button>
             </div>
 
@@ -674,18 +673,17 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                     position: 'absolute',
                     top: '12px',
                     left: '12px',
-                    background: 'rgba(236,72,153,0.9)',
+                    background: 'rgba(224,123,180,0.92)',
                     padding: '4px 10px',
                     borderRadius: '4px',
                     fontSize: '11px',
                     color: 'white',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '6px',
-                    animation: 'pulse-glow 1s infinite ease-in-out'
+                    gap: '6px'
                   }}
                 >
-                  <Users size={10} /> {nameB || 'Partner'} is drawing...
+                  <Users size={10} /> {nameB || 'Partner'} is drawing…
                 </div>
               )}
             </div>
@@ -696,7 +694,7 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                 <RotateCcw size={14} /> Clear Canvas
               </button>
               <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                Draw with your mouse. Wait for response.
+                Draw — strokes sync live.
               </div>
             </div>
 
@@ -731,31 +729,16 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
       {/* Deep Space Coffee Modal */}
       {/* ---------------------------------------------------- */}
       {activeModal === 'cafe' && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0,0,0,0.85)',
-            backdropFilter: 'blur(10px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 100,
-            padding: '20px'
-          }}
-        >
+        <div className="modal-overlay">
           <div
-            className="glass-panel"
+            className="glass-panel modal-panel"
             style={{
               maxWidth: '440px',
               width: '100%',
               display: 'flex',
               flexDirection: 'column',
               gap: '16px',
-              boxShadow: '0 25px 50px -12px rgba(20,184,166,0.5)'
+              boxShadow: 'var(--shadow-pop)'
             }}
           >
             <div className="flex-between">
@@ -765,30 +748,56 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
               </h3>
               <button
                 onClick={() => setActiveModal(null)}
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+                className="modal-close"
+                aria-label="Close Deep Space Coffee"
               >
-                <X size={20} />
+                <X size={18} />
               </button>
             </div>
 
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
-              <div style={{ fontSize: '48px', fontWeight: 800, fontFamily: 'monospace', letterSpacing: '0.05em' }}>
+              <div style={{ fontSize: '44px', fontWeight: 650, fontFamily: 'monospace', letterSpacing: '0.02em' }}>
                 {formatTime(secondsLeft)}
               </div>
               <span style={{ fontSize: '13px', color: 'var(--text-muted)', display: 'block', marginTop: '6px' }}>
-                SHARED POMODORO SESSION
+                Shared focus session
               </span>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <label>Shared Ambient Soundscape</label>
+              <label>Soundscape</label>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                <button className="btn btn-outline" style={{ justifyContent: 'start', fontSize: '12px' }}>
-                  ☕ Cosmic Cafe: <span style={{ color: 'var(--accent)' }}>Active</span>
-                </button>
-                <button className="btn btn-outline" style={{ justifyContent: 'start', fontSize: '12px', opacity: 0.6 }}>
-                  🌧️ Solar Rain: Off
-                </button>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '9px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border-glass)',
+                    fontSize: '13px'
+                  }}
+                >
+                  <Coffee size={14} color="var(--accent)" />
+                  <span>Cosmic Cafe</span>
+                  <span style={{ marginLeft: 'auto', color: 'var(--accent)', fontSize: '12px' }}>Active</span>
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '9px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border-glass)',
+                    fontSize: '13px',
+                    color: 'var(--text-muted)'
+                  }}
+                >
+                  <CloudRain size={14} />
+                  <span>Solar Rain</span>
+                  <span style={{ marginLeft: 'auto', fontSize: '12px' }}>Off</span>
+                </div>
               </div>
             </div>
 

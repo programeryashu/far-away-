@@ -28,7 +28,7 @@ export interface ClientMessage {
   sender: string;
   text: string;
   timestamp: string;
-  status: 'sending' | 'routing' | 'delivered';
+  status: 'sending' | 'delivered';
 }
 
 /**

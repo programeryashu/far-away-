@@ -157,15 +157,10 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
 
   return (
     <div className="glass-panel" style={{ position: 'relative' }}>
-      <div className="flex-between" style={{ marginBottom: '16px' }}>
-        <h3 style={{ fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <MapPin size={20} color={colorTheme === 'primary' ? 'var(--primary)' : 'var(--secondary)'} />
-          {label}
-        </h3>
-        <span className={`badge ${colorTheme === 'primary' ? 'badge-primary' : 'badge-accent'}`}>
-          Active
-        </span>
-      </div>
+      <h3 style={{ fontSize: '15px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+        <MapPin size={16} color={colorTheme === 'primary' ? 'var(--primary)' : 'var(--secondary)'} />
+        {label}
+      </h3>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
         <div>
@@ -173,9 +168,12 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
           <input
             id={`username-${label}`}
             type="text"
+            name="displayName"
+            autoComplete="name"
+            spellCheck={false}
             value={userName}
             onChange={(e) => setUserName(e.target.value)}
-            placeholder="Enter name..."
+            placeholder="Enter name…"
             disabled={disabled}
           />
         </div>
@@ -201,6 +199,9 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
             <input
               id={`search-${label}`}
               type="text"
+              name="city"
+              autoComplete="off"
+              spellCheck={false}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onFocus={() => setShowDropdown(true)}

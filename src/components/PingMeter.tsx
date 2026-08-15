@@ -75,13 +75,6 @@ export const PingMeter: React.FC<PingMeterProps> = ({ connection, hasPeer }) => 
         ? 'var(--secondary)'
         : 'var(--text-muted)';
 
-  const lightGlow =
-    status === 'measured'
-      ? '0 0 18px rgba(20, 184, 166, 0.6)'
-      : status === 'pinging'
-        ? '0 0 18px rgba(251, 191, 36, 0.5)'
-        : 'none';
-
   const display =
     latency !== null
       ? `~${latency} ms`
@@ -100,11 +93,9 @@ export const PingMeter: React.FC<PingMeterProps> = ({ connection, hasPeer }) => 
               width: '44px',
               height: '44px',
               borderRadius: '50%',
-              background: `radial-gradient(circle, ${lightColor} 0%, transparent 75%)`,
-              border: `2px solid ${status === 'pinging' ? 'var(--secondary)' : 'rgba(255,255,255,0.15)'}`,
-              boxShadow: lightGlow,
-              animation: status === 'pinging' ? 'pulse-glow 0.7s infinite ease-in-out' : 'none',
-              transition: 'background 0.3s, box-shadow 0.3s, border-color 0.3s'
+              background: lightColor,
+              border: `1px solid ${status === 'pinging' ? 'var(--secondary)' : 'rgba(255,255,255,0.18)'}`,
+              transition: 'background-color 150ms ease, border-color 150ms ease'
             }}
           />
           <div>
@@ -124,7 +115,7 @@ export const PingMeter: React.FC<PingMeterProps> = ({ connection, hasPeer }) => 
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>
+            <div style={{ fontSize: '11px', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
               Round-trip
             </div>
             <div

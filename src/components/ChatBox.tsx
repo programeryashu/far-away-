@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Cpu, Globe, CheckCheck } from 'lucide-react';
+import { Send, MessageSquare, CheckCheck } from 'lucide-react';
 import type { Connection } from '../lib/connection';
 import { mergeMessages, serverMessagesToClient } from '../lib/reconcile';
 
@@ -26,8 +26,7 @@ interface Message {
   sender: string;
   text: string;
   timestamp: string;
-  status: 'sending' | 'routing' | 'delivered';
-  route?: string;
+  status: 'sending' | 'delivered';
 }
 
 export const ChatBox: React.FC<ChatBoxProps> = ({
@@ -55,7 +54,6 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     }
   ]);
   const [inputText, setInputText] = useState('');
-  const [routingStatus, setRoutingStatus] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   // Scroll to bottom whenever messages list grows
@@ -105,16 +103,6 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   };
 
   const distance = calculateDistance(cityA.lat, cityA.lng, cityB.lat, cityB.lng);
-  
-  // Calculate simulated route path
-  const getSimulatedRoute = (dist: number) => {
-    if (dist < 500) return 'Direct terrestrial fiber';
-    if (dist < 3000) return 'Undersea fiber segment -> Regional datacenter';
-    if (dist < 8000) return 'Undersea transatlantic fiber -> Edge node gateway';
-    return 'Trans-Pacific fiber backbone -> Starlink constellation hop';
-  };
-
-  const routeDescription = getSimulatedRoute(distance);
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
@@ -138,26 +126,14 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       text: inputText
     });
 
-    // Trigger Transit routing animation simulation
-    setRoutingStatus('Routing...');
-
-    // Step 1: Simulated ocean crossing
-    setTimeout(() => {
-      setMessages(prev =>
-        prev.map(m => (m.id === userMsgId ? { ...m, status: 'routing', route: routeDescription } : m))
-      );
-      setRoutingStatus(`Traversing: ${routeDescription}`);
-    }, 600);
-
-    // Step 2: Delivered
+    // Delivered once the transport has accepted it. In a session the server
+    // ack swaps the local id for the server id; solo local mode falls back to
+    // this timeout. The auto partner reply is the offline fallback for local
+    // solo mode only — a real peer (any transport) answers for itself.
     setTimeout(() => {
       setMessages(prev =>
         prev.map(m => (m.id === userMsgId ? { ...m, status: 'delivered' } : m))
       );
-      setRoutingStatus(null);
-
-      // Step 3: Auto partner reply is the offline fallback for local solo
-      // mode only — a real peer (any transport) answers for itself.
       if (!hasPeer && connection.mode === 'local') simulatePartnerReply();
     }, 1500);
   };
@@ -219,7 +195,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   };
 
   return (
-    <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '400px' }}>
+    <div id="chat-box" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '400px' }}>
       {/* Header */}
       <div
         className="flex-between"
@@ -230,17 +206,13 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         }}
       >
         <div>
-          <h3 style={{ fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Globe size={18} color="var(--primary)" />
-            Sub-orbital Chat
+          <h3 style={{ fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <MessageSquare size={16} color="var(--text-secondary)" />
+            Chat
           </h3>
           <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-            Routing Path: <strong style={{ color: 'var(--text-secondary)' }}>{routeDescription}</strong>
+            Messages sync over the {connection.mode === 'remote' ? 'session' : 'local'} channel
           </span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <Cpu size={14} color="var(--accent)" />
-          <span style={{ fontSize: '11px', color: 'var(--accent)', fontWeight: 600 }}>Active Route</span>
         </div>
       </div>
 
@@ -274,16 +246,13 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
               </span>
               <div
                 style={{
-                  background: isMe
-                    ? 'linear-gradient(135deg, var(--primary), #4f46e5)'
-                    : 'rgba(255, 255, 255, 0.04)',
+                  background: isMe ? 'var(--primary)' : 'rgba(255, 255, 255, 0.04)',
                   border: isMe ? 'none' : '1px solid var(--border-glass)',
                   padding: '10px 14px',
-                  borderRadius: isMe ? '16px 16px 2px 16px' : '16px 16px 16px 2px',
+                  borderRadius: isMe ? '14px 14px 2px 14px' : '14px 14px 14px 2px',
                   color: 'white',
                   fontSize: '14px',
-                  lineHeight: '1.4',
-                  boxShadow: isMe ? '0 4px 10px rgba(99, 102, 241, 0.2)' : 'none'
+                  lineHeight: '1.4'
                 }}
               >
                 {msg.text}
@@ -300,9 +269,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                           width: '6px',
                           height: '6px',
                           borderRadius: '50%',
-                          background: msg.status === 'sending' ? 'var(--primary)' : 'var(--secondary)',
-                          display: 'inline-block',
-                          animation: 'pulse-glow 0.8s infinite ease-in-out'
+                          background: 'var(--text-muted)',
+                          display: 'inline-block'
                         }}
                       />
                     )}
@@ -316,29 +284,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       </div>
 
       {/* Input area */}
-      <form onSubmit={handleSend} style={{ display: 'flex', gap: '10px', position: 'relative' }}>
-        {routingStatus && (
-          <div
-            style={{
-              position: 'absolute',
-              top: '-32px',
-              left: 0,
-              right: 0,
-              background: 'rgba(7, 9, 19, 0.9)',
-              border: '1px solid var(--border-glow)',
-              borderRadius: '4px',
-              padding: '4px 10px',
-              fontSize: '11px',
-              color: 'var(--primary)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              animation: 'pulse-glow 1s infinite'
-            }}
-          >
-            {routingStatus}
-          </div>
-        )}
+      <form onSubmit={handleSend} style={{ display: 'flex', gap: '10px' }}>
         <input
           type="text"
           value={inputText}

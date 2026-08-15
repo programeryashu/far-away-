@@ -24,6 +24,9 @@ data/
 # freebuff preview tooling state (logs, run notes) — never commit machine-specific state
 .freebuff/
 
+# agent-skill tooling state (auto-installed skill copies)
+.agents/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

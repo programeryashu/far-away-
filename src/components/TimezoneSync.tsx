@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Sun, Moon } from 'lucide-react';
+import { Clock, Sun, Moon, Briefcase, Coffee } from 'lucide-react';
 import { getUTCOffsetHours } from '../lib/time';
 
 interface TimezoneSyncProps {
@@ -71,11 +71,11 @@ export const TimezoneSync: React.FC<TimezoneSyncProps> = ({
   const getActivityStatus = (hour: number) => {
     const rounded = Math.floor((hour + 24) % 24);
     if (rounded >= 23 || rounded < 7) {
-      return { label: 'Sleeping', emoji: '😴', class: 'status-sleep', color: '#818cf8' };
+      return { label: 'Sleeping', Icon: Moon, class: 'status-sleep' };
     } else if (rounded >= 9 && rounded < 17) {
-      return { label: 'Working', emoji: '💼', class: 'status-work', color: '#f59e0b' };
+      return { label: 'Working', Icon: Briefcase, class: 'status-work' };
     } else {
-      return { label: 'Free Time', emoji: '☕', class: 'status-free', color: '#10b981' };
+      return { label: 'Free time', Icon: Coffee, class: 'status-free' };
     }
   };
 
@@ -96,11 +96,10 @@ export const TimezoneSync: React.FC<TimezoneSyncProps> = ({
     Math.floor((currentHourB + 24) % 24) < 23;
 
   return (
-    <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <h2 style={{ fontSize: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <Clock size={22} color="var(--primary)" />
-        Temporal Chronology & Overlap
-      </h2>
+    <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>        <h2 style={{ fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Clock size={18} color="var(--text-secondary)" />
+          Time Overlap
+        </h2>
 
       {/* Clocks */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
@@ -156,8 +155,8 @@ export const TimezoneSync: React.FC<TimezoneSyncProps> = ({
       {/* Difference Banner */}
       <div
         style={{
-          background: 'rgba(99, 102, 241, 0.05)',
-          border: '1px dashed var(--border-glow)',
+          background: 'var(--bg-inset)',
+          border: '1px solid var(--border-glass)',
           padding: '12px',
           borderRadius: 'var(--radius-md)',
           textAlign: 'center',
@@ -186,7 +185,7 @@ export const TimezoneSync: React.FC<TimezoneSyncProps> = ({
         }}
       >
         <div className="flex-between" style={{ marginBottom: '12px' }}>
-          <span style={{ fontSize: '13px', fontWeight: 600 }}>24-Hour Connection Planner</span>
+          <span style={{ fontSize: '13px', fontWeight: 600 }}>Plan an overlap</span>
           <button
             onClick={() => setUseSlider(!useSlider)}
             className="btn btn-outline"
@@ -221,7 +220,7 @@ export const TimezoneSync: React.FC<TimezoneSyncProps> = ({
               padding: '12px',
               borderRadius: 'var(--radius-sm)',
               background: 'rgba(255,255,255,0.01)',
-              border: `1px solid ${statusA.color}30`,
+              border: '1px solid var(--border-glass)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between'
@@ -232,8 +231,8 @@ export const TimezoneSync: React.FC<TimezoneSyncProps> = ({
               <span style={{ fontSize: '15px', fontWeight: 600 }}>{Math.floor(currentHourA)}:00</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span>{statusA.emoji}</span>
-              <span style={{ fontSize: '13px', color: statusA.color, fontWeight: 500 }}>{statusA.label}</span>
+              <statusA.Icon size={14} />
+              <span className={statusA.class} style={{ fontSize: '13px', fontWeight: 500 }}>{statusA.label}</span>
             </div>
           </div>
 
@@ -243,7 +242,7 @@ export const TimezoneSync: React.FC<TimezoneSyncProps> = ({
               padding: '12px',
               borderRadius: 'var(--radius-sm)',
               background: 'rgba(255,255,255,0.01)',
-              border: `1px solid ${statusB.color}30`,
+              border: '1px solid var(--border-glass)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between'
@@ -254,8 +253,8 @@ export const TimezoneSync: React.FC<TimezoneSyncProps> = ({
               <span style={{ fontSize: '15px', fontWeight: 600 }}>{Math.floor(currentHourB)}:00</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span>{statusB.emoji}</span>
-              <span style={{ fontSize: '13px', color: statusB.color, fontWeight: 500 }}>{statusB.label}</span>
+              <statusB.Icon size={14} />
+              <span className={statusB.class} style={{ fontSize: '13px', fontWeight: 500 }}>{statusB.label}</span>
             </div>
           </div>
         </div>
@@ -278,14 +277,14 @@ export const TimezoneSync: React.FC<TimezoneSyncProps> = ({
             <>
               <Sun size={18} color="var(--accent)" />
               <div>
-                <strong style={{ color: 'white' }}>Overlap Window Active!</strong> Both are awake and free to interact. Perfect time for sync activities.
+                <strong style={{ color: 'white' }}>Overlap now</strong> — both are awake and free. Good time for a shared activity.
               </div>
             </>
           ) : (
             <>
               <Moon size={18} color="#f87171" />
               <div>
-                <strong style={{ color: '#f87171' }}>Asymmetric Window</strong> One user is in sleeping or working hours. Asynchronous messages recommended.
+                <strong style={{ color: '#f87171' }}>No overlap right now</strong> — one of you is sleeping or working. Leave an asynchronous message.
               </div>
             </>
           )}

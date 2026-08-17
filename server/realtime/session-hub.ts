@@ -19,13 +19,52 @@ export interface SessionPeer {
   peerId: string;
 }
 
+const HEARTBEAT_INTERVAL_MS = 25_000;
+const PONG_TIMEOUT_MS = 70_000;
+
 export class SessionHub {
   private peers = new Map<string, SessionPeer>();
   private sessionConnections = new Map<string, Set<string>>();
   private fastify: FastifyInstance;
 
+  // Heartbeat: protocol-level pings detect half-open TCP connections (e.g. a
+  // phone that dropped off the network without a FIN) far faster than the
+  // stale-seat window, so presence and seats stay honest. Browsers answer
+  // pings automatically at the protocol level — no client change needed.
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private lastPong = new Map<string, number>();
+
   constructor(fastify: FastifyInstance) {
     this.fastify = fastify;
+  }
+
+  startHeartbeat(): void {
+    if (this.heartbeatTimer) return;
+    this.heartbeatTimer = setInterval(() => this.pingConnections(), HEARTBEAT_INTERVAL_MS);
+  }
+
+  dispose(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    this.lastPong.clear();
+  }
+
+  private pingConnections(): void {
+    if (this.peers.size === 0) return;
+    const now = Date.now();
+    for (const [connectionId, record] of [...this.peers]) {
+      const last = this.lastPong.get(connectionId) ?? now;
+      if (now - last > PONG_TIMEOUT_MS) {
+        // Unresponsive across multiple ping cycles: treat as dead and run the
+        // normal disconnect bookkeeping (peer-left announcements included).
+        record.socket.terminate?.();
+        this.handleDisconnect(connectionId);
+        continue;
+      }
+      record.socket.ping?.();
+    }
   }
 
   addConnection(sessionId: string, peerId: string, socket: WebSocket) {
@@ -35,6 +74,7 @@ export class SessionHub {
     const connectionId = randomUUID();
     const record: SessionPeer = { connectionId, socket, sessionId, peerId };
     this.peers.set(connectionId, record);
+    this.lastPong.set(connectionId, Date.now());
 
     if (!this.sessionConnections.has(sessionId)) {
       this.sessionConnections.set(sessionId, new Set());
@@ -45,6 +85,11 @@ export class SessionHub {
 
     socket.on("message", (raw) => {
       this.handleMessage(connectionId, raw);
+    });
+
+    socket.on("pong", () => {
+      this.lastPong.set(connectionId, Date.now());
+      this.fastify.store.updatePeerLastSeen(peerId);
     });
 
     socket.on("close", () => {
@@ -174,14 +219,24 @@ export class SessionHub {
       case CINEMA_EVENT: {
         const seq = this.logEvent(record.sessionId, CINEMA_EVENT, envelope.payload);
         if (seq === null) break;
-        // Persist the current play/pause so a fresh joiner (afterSeq 0, who
-        // never replays the event) inherits it from the state snapshot.
-        this.fastify.store.upsertCinemaState(record.sessionId, envelope.payload.playing);
-        this.broadcastToSession(
+        // Persist play/pause plus the media position so a fresh joiner
+        // (afterSeq 0, who never replays the event) inherits the exact
+        // playback point from the state snapshot.
+        this.fastify.store.upsertCinemaState(
           record.sessionId,
-          { event: CINEMA_EVENT, payload: envelope.payload, seq },
-          connectionId,
+          envelope.payload.playing,
+          envelope.payload.position,
         );
+        // Cinema is the one sequenced event broadcast to the sender too: the
+        // sender otherwise never advances past its own event seq, so the
+        // peer's next action arrives as a gap and degrades to a full-snapshot
+        // catch-up (state survives, but live application is lost). The client
+        // recognizes and ignores its own echo.
+        this.broadcastToSession(record.sessionId, {
+          event: CINEMA_EVENT,
+          payload: envelope.payload,
+          seq,
+        });
         break;
       }
       case "timer": {
@@ -242,6 +297,9 @@ export class SessionHub {
   }
 
   private persistStroke(sessionId: string, stroke: StrokePayload) {
+    // Known limitation (accepted for the hackathon): the whole snapshot is
+    // rewritten per stroke — O(session strokes) writes per stroke. Fine for a
+    // two-person session; a per-stroke table is the fix if it ever matters.
     const snapshot = this.fastify.store.getCanvasSnapshot(sessionId);
     let strokes: unknown[] = [];
     if (snapshot) {
@@ -369,6 +427,7 @@ export class SessionHub {
     if (!record) return;
 
     this.peers.delete(connectionId);
+    this.lastPong.delete(connectionId);
     const sessionConns = this.sessionConnections.get(record.sessionId);
     if (sessionConns) {
       sessionConns.delete(connectionId);

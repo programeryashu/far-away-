@@ -15,6 +15,12 @@ export interface Peer {
   city_json: string;
   joined_at: number;
   last_seen: number;
+  /**
+   * SHA-256 hex of the peer's session-scoped secret token (issued at join).
+   * Only the joining client ever sees the token itself; the hash is what the
+   * server stores and compares. Empty for legacy rows that predate tokens.
+   */
+  token_hash: string;
 }
 
 export interface Message {
@@ -43,8 +49,10 @@ export interface TimerState {
 
 export interface CinemaState {
   session_id: string;
-  /** Current play/pause of the shared watch — the full cinema model. */
+  /** Current play/pause of the shared watch. */
   playing: boolean;
+  /** Media position in seconds, stored alongside `updated_at`. */
+  position: number;
   updated_at: number;
 }
 
@@ -151,6 +159,20 @@ export const migrations: Migration[] = [
         playing INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
+    `,
+  },
+  {
+    id: 5,
+    name: "cinema_position",
+    sql: `
+      ALTER TABLE cinema_state ADD COLUMN position REAL NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    id: 6,
+    name: "peer_token_hash",
+    sql: `
+      ALTER TABLE peers ADD COLUMN token_hash TEXT NOT NULL DEFAULT '';
     `,
   },
 ];

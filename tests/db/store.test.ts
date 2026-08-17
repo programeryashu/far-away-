@@ -45,6 +45,16 @@ describe("Store", () => {
     expect(store.countPeers(sessionId)).toBe(1);
   });
 
+  it("stores only the hash of a peer's session token", () => {
+    const sessionId = "s1";
+    store.createSession(sessionId, "C1", "active", Date.now() + 1000);
+
+    const tokenHash = "a".repeat(64);
+    store.addPeer("p1", sessionId, "a", "Alice", "{}", tokenHash);
+    expect(store.getPeer("p1")!.token_hash).toBe(tokenHash);
+    expect(JSON.stringify(store.getPeers(sessionId))).not.toContain("secret");
+  });
+
   it("should handle messages and sequences", () => {
     const sessionId = "s1";
     store.createSession(sessionId, "C1", "active", Date.now() + 1000);
@@ -108,29 +118,33 @@ describe("Store", () => {
     expect(state?.timer?.end_at).toBe(1234);
   });
 
-  it("should upsert and read cinema state with boolean normalization", () => {
+  it("should upsert and read cinema state with boolean normalization and position", () => {
     const sessionId = "s1";
     store.createSession(sessionId, "C1", "active", Date.now() + 1000);
 
     // No row yet → null.
     expect(store.getCinemaState(sessionId)).toBeNull();
 
-    store.upsertCinemaState(sessionId, true);
+    store.upsertCinemaState(sessionId, true, 12.5);
     const c1 = store.getCinemaState(sessionId);
     expect(c1?.playing).toBe(true);
+    expect(c1?.position).toBe(12.5);
 
     // SQLite stores the boolean as 1/0; the getter must normalize it back.
-    store.upsertCinemaState(sessionId, false);
-    expect(store.getCinemaState(sessionId)?.playing).toBe(false);
+    store.upsertCinemaState(sessionId, false, 30);
+    const c2 = store.getCinemaState(sessionId);
+    expect(c2?.playing).toBe(false);
+    expect(c2?.position).toBe(30);
     expect(store.getCinemaState("other")).toBeNull();
   });
 
   it("should include cinema in session state", () => {
     const sessionId = "s1";
     store.createSession(sessionId, "C1", "active", Date.now() + 1000);
-    store.upsertCinemaState(sessionId, true);
+    store.upsertCinemaState(sessionId, true, 8);
     const state = store.getSessionState(sessionId);
     expect(state?.cinema?.playing).toBe(true);
+    expect(state?.cinema?.position).toBe(8);
     expect(state?.cinema?.session_id).toBe(sessionId);
   });
 

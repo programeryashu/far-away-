@@ -206,7 +206,7 @@ describe("Shared Moment route", () => {
     const join = await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Alice", city: {} },
+      payload: { displayName: "Alice" },
     });
     const { peerId } = JSON.parse(join.payload) as { peerId: string };
     const res = await app.inject({

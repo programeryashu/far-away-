@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { SessionHub } from "../../server/realtime/session-hub.js";
 import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
@@ -7,6 +7,8 @@ import { parseEnvelope } from "../../shared/protocol.js";
 class MockSocket extends EventEmitter {
   readyState = 1;
   send = vi.fn();
+  ping = vi.fn();
+  terminate = vi.fn();
 }
 
 let uuidCounter = 0;
@@ -178,7 +180,7 @@ describe("SessionHub", () => {
           seq: 0,
           timestamp: 123,
           event: "cinema",
-          payload: { playing: true },
+          payload: { playing: true, position: 0 },
         }),
       ),
     );
@@ -186,7 +188,9 @@ describe("SessionHub", () => {
     const sent = JSON.parse(socket2.send.mock.calls[0][0]);
     expect(parseEnvelope(sent)).not.toBeNull();
     expect(sent.event).toBe("cinema");
-    expect(sent.payload).toEqual({ playing: true });
+    expect(sent.payload).toEqual({ playing: true, position: 0 });
+    // Play/pause AND position persist for the snapshot a fresh joiner receives.
+    expect(mockStore.upsertCinemaState).toHaveBeenCalledWith("s1", true, 0);
   });
 
   it("should reject an invalid cinema payload", () => {
@@ -268,7 +272,7 @@ describe("SessionHub", () => {
     send("timer", { action: "start", endAt: 1000, remaining: 0 });
     send("canvas-stroke", { points: [{ x: 1, y: 2 }], color: "#fff" });
     send("canvas-clear", {});
-    send("cinema", { playing: true });
+    send("cinema", { playing: true, position: 12 });
     send("chat", { text: "hi" });
 
     // Every event was appended to the durable log with the right name.
@@ -298,7 +302,7 @@ describe("SessionHub", () => {
     mockStore.getEventsAfterSeq.mockReturnValue([
       { id: 3, session_id: "s1", seq: 3, event: "chat", payload_json: JSON.stringify({ id: "m3", peerId: "p2", sender: "Bob", text: "yo", seq: 2, timestamp: 1 }), created_at: 100 },
       { id: 4, session_id: "s1", seq: 4, event: "timer", payload_json: JSON.stringify({ action: "start", endAt: 1, remaining: 0 }), created_at: 200 },
-      { id: 5, session_id: "s1", seq: 5, event: "cinema", payload_json: JSON.stringify({ playing: true }), created_at: 300 },
+      { id: 5, session_id: "s1", seq: 5, event: "cinema", payload_json: JSON.stringify({ playing: true, position: 0 }), created_at: 300 },
     ]);
 
     vi.clearAllMocks();
@@ -541,5 +545,56 @@ describe("SessionHub", () => {
     const sent = JSON.parse(socketC.send.mock.calls[0][0]);
     expect(sent.event).toBe("peer-left");
     expect(sent.payload).toEqual({ peerId: "p1" });
+  });
+
+  describe("heartbeat", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      hub.dispose();
+      vi.useRealTimers();
+    });
+
+    it("pings live connections and never terminates a socket that answers", () => {
+      const socket = new MockSocket();
+      hub.addConnection("s1", "p1", socket as unknown as WebSocket);
+      hub.startHeartbeat();
+
+      vi.advanceTimersByTime(25_000);
+      expect(socket.ping).toHaveBeenCalledTimes(1);
+      // The browser answers at protocol level; emulate the pong.
+      socket.emit("pong");
+
+      vi.advanceTimersByTime(25_000);
+      vi.advanceTimersByTime(25_000);
+      socket.emit("pong");
+
+      expect(socket.terminate).not.toHaveBeenCalled();
+      expect(hub.activeConnections).toBe(1);
+    });
+
+    it("terminates a socket that has not answered across multiple ping cycles", () => {
+      const alive = new MockSocket();
+      const dead = new MockSocket();
+      hub.addConnection("s1", "p1", alive as unknown as WebSocket);
+      hub.addConnection("s1", "p2", dead as unknown as WebSocket);
+      hub.startHeartbeat();
+
+      // First cycle pings both; only `alive` answers.
+      vi.advanceTimersByTime(25_000);
+      expect(alive.ping).toHaveBeenCalledTimes(1);
+      expect(dead.ping).toHaveBeenCalledTimes(1);
+      alive.emit("pong");
+
+      // `dead` never pongs: past the timeout it is terminated and cleaned up,
+      // while `alive` stays connected.
+      vi.advanceTimersByTime(50_000);
+      alive.emit("pong");
+
+      expect(dead.terminate).toHaveBeenCalled();
+      expect(hub.activeConnections).toBe(1);
+    });
   });
 });

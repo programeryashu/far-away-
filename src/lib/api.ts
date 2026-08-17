@@ -13,6 +13,11 @@ export interface JoinResponse {
   sessionId?: string;
   peerId: string;
   role: 'a' | 'b';
+  /**
+   * Session-scoped secret for this peer (authorizes the WebSocket and leave).
+   * Absent only for legacy servers that predate tokens.
+   */
+  token?: string;
 }
 
 /** Error thrown by API helpers; `status` is the HTTP status (null for network errors). */
@@ -90,13 +95,17 @@ export async function joinSessionByCode(
   return res.json() as Promise<JoinResponse>;
 }
 
-export async function leaveSession(sessionId: string, peerId: string): Promise<void> {
+export async function leaveSession(
+  sessionId: string,
+  peerId: string,
+  token?: string,
+): Promise<void> {
   let res: Response;
   try {
     res = await fetch(`${API_BASE}/api/sessions/${sessionId}/leave`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ peerId }),
+      body: JSON.stringify({ peerId, ...(token ? { token } : {}) }),
     });
   } catch {
     throw new ApiError('Cannot reach the Orbit server', null);

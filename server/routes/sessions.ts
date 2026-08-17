@@ -1,9 +1,26 @@
 import { randomUUID, randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { CityPayloadSchema } from "../../shared/protocol.js";
+import { hashPeerToken, issuePeerToken, peerTokenMatches } from "../security/peer-token.js";
+
+// Human-friendly but unambiguous: no I/O/0/1. Six characters from a 32-char
+// alphabet = 30 bits of entropy (~1.07B codes) — a large step up from the old
+// 24-bit hex, while staying just as easy to read out and type.
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const CODE_LENGTH = 6;
 
 function generateJoinCode(): string {
-  return randomBytes(3).toString("hex").toUpperCase();
+  const bytes = randomBytes(CODE_LENGTH * 2);
+  let code = "";
+  for (const byte of bytes) {
+    if (code.length === CODE_LENGTH) break;
+    // Rejection sampling keeps the uniform distribution of randomBytes.
+    if (byte < 256 - (256 % CODE_ALPHABET.length)) {
+      code += CODE_ALPHABET[byte % CODE_ALPHABET.length];
+    }
+  }
+  return code.length === CODE_LENGTH ? code : generateJoinCode();
 }
 
 // A peer seat is reclaimable when its socket is gone AND its last contact is
@@ -17,8 +34,8 @@ const CreateSessionSchema = z.object({
 });
 
 const JoinSessionSchema = z.object({
-  displayName: z.string().min(1),
-  city: z.record(z.string(), z.any()).optional().default({}),
+  displayName: z.string().min(1).max(40),
+  city: CityPayloadSchema.optional(),
 });
 
 const JoinByCodeSchema = JoinSessionSchema.extend({
@@ -28,14 +45,16 @@ const JoinByCodeSchema = JoinSessionSchema.extend({
 type JoinInput = z.infer<typeof JoinSessionSchema>;
 
 type JoinResult =
-  | { ok: true; peerId: string; role: "a" | "b" }
+  | { ok: true; peerId: string; role: "a" | "b"; token: string }
   | { ok: false; status: 404 | 409 | 410; error: string };
 
 /**
  * Shared join logic for both the UUID route and the code route: session
  * existence/activity/expiry checks, two-peer cap with stale-seat reclaim, and
  * server-authoritative A/B role assignment. The role is always derived from
- * existing peers — a client can never choose its own.
+ * existing peers — a client can never choose its own. The returned token is
+ * the joining peer's session-scoped secret (the server persists only its
+ * hash); it authorizes that peer's WebSocket and leave requests.
  */
 function joinPeer(
   fastify: FastifyInstance,
@@ -80,8 +99,9 @@ function joinPeer(
   }
 
   const peerId = randomUUID();
-  fastify.store.addPeer(peerId, sessionId, role, displayName, JSON.stringify(city));
-  return { ok: true, peerId, role };
+  const token = issuePeerToken();
+  fastify.store.addPeer(peerId, sessionId, role, displayName, JSON.stringify(city ?? {}), hashPeerToken(token));
+  return { ok: true, peerId, role, token };
 }
 
 export async function sessionRoutes(fastify: FastifyInstance): Promise<void> {
@@ -125,34 +145,62 @@ export async function sessionRoutes(fastify: FastifyInstance): Promise<void> {
     if (!result.ok) {
       return reply.status(result.status).send({ error: result.error });
     }
-    return reply.status(200).send({ peerId: result.peerId, role: result.role });
+    return reply.status(200).send({ peerId: result.peerId, role: result.role, token: result.token });
   });
 
   // Human-friendly join: the 6-char session code instead of the UUID. The code
   // and the UUID stay conceptually separate — the code is what gets shared,
   // the UUID is the internal session identity.
+  //
+  // The code is typeable, so failed attempts are rate limited per IP: a lock
+  // window after repeated failures makes continuous guessing impractical
+  // without ever inconveniencing a legitimate user (successes don't count,
+  // and a success clears the counter).
   fastify.post("/api/sessions/join-by-code", async (request, reply) => {
     const { code, ...input } = JoinByCodeSchema.parse(request.body);
+
+    const key = `join:${request.ip}`;
+    const gate = fastify.joinLimiter.check(key);
+    if (gate.blocked) {
+      return reply
+        .status(429)
+        .header("Retry-After", String(gate.retryAfterSec))
+        .send({ error: "Too many attempts — try again in a moment.", retryAfterSec: gate.retryAfterSec });
+    }
+
     const session = store.getSessionByCode(code.toUpperCase());
     if (!session) {
+      fastify.joinLimiter.recordFailure(key);
       return reply.status(404).send({ error: "Session not found" });
     }
     const result = joinPeer(fastify, session.id, input);
+    if (!result.ok && (result.status === 404 || result.status === 410)) {
+      fastify.joinLimiter.recordFailure(key);
+    }
     if (!result.ok) {
       return reply.status(result.status).send({ error: result.error });
     }
+    fastify.joinLimiter.recordSuccess(key);
     return reply
       .status(200)
-      .send({ sessionId: session.id, peerId: result.peerId, role: result.role });
+      .send({ sessionId: session.id, peerId: result.peerId, role: result.role, token: result.token });
   });
 
   fastify.post("/api/sessions/:id/leave", async (request, reply) => {
     const { id } = z.object({ id: z.string() }).parse(request.params);
-    const { peerId } = z.object({ peerId: z.string() }).parse(request.body);
+    const { peerId, token } = z
+      .object({ peerId: z.string(), token: z.string().optional() })
+      .parse(request.body);
 
     const peer = store.getPeer(peerId);
     if (!peer || peer.session_id !== id) {
       return reply.status(404).send({ error: "Peer not found in this session" });
+    }
+
+    // Only the peer that holds the token may leave as that peer: knowing a
+    // peerId must never be enough to kick someone out of a session.
+    if (!peerTokenMatches(token, peer.token_hash)) {
+      return reply.status(403).send({ error: "Not authorized to leave as this peer" });
     }
 
     store.removePeer(peerId);

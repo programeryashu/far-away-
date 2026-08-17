@@ -205,7 +205,7 @@ describe("RealtimeClient", () => {
     socket.onmessage?.({ data: wireFrame("timer", 1, { action: "start", endAt: 1, remaining: 0 }) });
     // Same event again (live + replay overlap) — must be dropped.
     socket.onmessage?.({ data: wireFrame("timer", 1, { action: "start", endAt: 1, remaining: 0 }) });
-    socket.onmessage?.({ data: wireFrame("cinema", 1, { playing: true }) });
+    socket.onmessage?.({ data: wireFrame("cinema", 1, { playing: true, position: 0 }) });
 
     expect(received).toEqual(["timer"]);
   });
@@ -226,7 +226,7 @@ describe("RealtimeClient", () => {
     expect(catchUp).toHaveLength(2); // initial + gap-triggered
 
     // The missing event arrives (replay) → both apply in order.
-    socket.onmessage?.({ data: wireFrame("cinema", 1, { playing: true }) });
+    socket.onmessage?.({ data: wireFrame("cinema", 1, { playing: true, position: 0 }) });
     expect(received).toEqual(["cinema", "timer"]);
   });
 
@@ -242,7 +242,7 @@ describe("RealtimeClient", () => {
     client.onSeqChange((seq) => seqs.push(seq));
 
     // Gap: seq 3 buffered.
-    socket.onmessage?.({ data: wireFrame("cinema", 3, { playing: true }) });
+    socket.onmessage?.({ data: wireFrame("cinema", 3, { playing: true, position: 0 }) });
     expect(received).toEqual([]);
 
     // A snapshot covering the gap arrives → authoritative, drains the buffer.

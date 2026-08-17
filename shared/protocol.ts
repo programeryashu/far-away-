@@ -3,11 +3,39 @@ import { z } from "zod";
 export const PROTOCOL_VERSION = 1;
 
 /**
- * Cinema (SynchroCinema) event name and payload. The feature's only state is
- * a play/pause boolean — there is no seek/position control in the current
- * implementation, so nothing else is part of the payload.
+ * Cinema (SynchroCinema) event name and payload. The shared state is the
+ * play/pause boolean plus the media position (seconds) at the moment the
+ * action was taken — the peer applies both, so play, pause, and seek all
+ * travel as one event.
  */
 export const CINEMA_EVENT = "cinema";
+
+// ---------------------------------------------------------------------------
+// Payload limits
+// ---------------------------------------------------------------------------
+// The same Zod schemas gate frames on BOTH sides (client outbound, server
+// inbound), so these caps are the single enforcement point for chat text,
+// strokes, identity strings, and every numeric range on the wire. They exist
+// to keep a hostile or buggy client from pushing unbounded payloads into the
+// server, SQLite, and the peer — normal use never comes near them.
+
+/** Longest chat message accepted (characters). */
+export const MAX_CHAT_TEXT_LENGTH = 2_000;
+/** Longest display name accepted (characters). */
+export const MAX_NAME_LENGTH = 40;
+export const MAX_CITY_NAME_LENGTH = 100;
+export const MAX_TIMEZONE_LENGTH = 64;
+/** Longest client-generated message/stroke reference id accepted. */
+export const MAX_ID_LENGTH = 64;
+export const MAX_COLOR_LENGTH = 32;
+/** Points per canvas stroke before the frame is rejected. */
+export const MAX_STROKE_POINTS = 512;
+/** Canvas coordinates are CSS pixels; anything beyond this is garbage. */
+export const MAX_CANVAS_COORD = 100_000;
+/** Cinema media position and timer durations are seconds; cap at 24h. */
+export const MAX_MEDIA_SECONDS = 86_400;
+/** Wall-clock milliseconds cap (year 2100) for timestamps and deadlines. */
+export const MAX_WALL_CLOCK_MS = 4_102_444_800_000;
 
 // ---------------------------------------------------------------------------
 // Envelope shape
@@ -18,7 +46,7 @@ const envelopeFields = {
   sessionId: z.string(),
   peerId: z.string(),
   seq: z.number().int().nonnegative(),
-  timestamp: z.number(),
+  timestamp: z.number().min(0).max(MAX_WALL_CLOCK_MS),
 };
 
 /** Loose structural envelope — accepts any event name and any payload. */
@@ -63,45 +91,55 @@ export function parseEnvelope(data: unknown): BaseEnvelope | null {
  */
 const EmptyPayloadSchema = z.strictObject({}).optional();
 
-export const PingPayloadSchema = z.object({ ts: z.number() });
+export const PingPayloadSchema = z.object({
+  ts: z.number().min(0).max(MAX_WALL_CLOCK_MS),
+});
 export type PingPayload = z.infer<typeof PingPayloadSchema>;
 
-export const CinemaPayloadSchema = z.object({ playing: z.boolean() });
+export const CinemaPayloadSchema = z.object({
+  playing: z.boolean(),
+  /** Media position in seconds when the action was taken. */
+  position: z.number().min(0).max(MAX_MEDIA_SECONDS),
+});
 export type CinemaPayload = z.infer<typeof CinemaPayloadSchema>;
 
 export const TimerPayloadSchema = z.object({
   action: z.enum(["start", "pause", "reset"]),
-  endAt: z.number(),
-  remaining: z.number(),
+  endAt: z.number().min(0).max(MAX_WALL_CLOCK_MS),
+  remaining: z.number().min(0).max(MAX_MEDIA_SECONDS),
 });
 export type TimerPayload = z.infer<typeof TimerPayloadSchema>;
 
-export const CanvasPointSchema = z.object({ x: z.number(), y: z.number() });
+export const CanvasPointSchema = z.object({
+  x: z.number().finite().min(-MAX_CANVAS_COORD).max(MAX_CANVAS_COORD),
+  y: z.number().finite().min(-MAX_CANVAS_COORD).max(MAX_CANVAS_COORD),
+});
 
 export const StrokePayloadSchema = z.object({
-  points: z.array(CanvasPointSchema),
-  color: z.string(),
+  points: z.array(CanvasPointSchema).max(MAX_STROKE_POINTS),
+  color: z.string().min(1).max(MAX_COLOR_LENGTH),
 });
 export type StrokePayload = z.infer<typeof StrokePayloadSchema>;
 
 export const ChatSendPayloadSchema = z.object({
   /** Client-generated id so the sender can correlate the ack. */
-  id: z.string().optional(),
-  sender: z.string().optional(),
+  id: z.string().min(1).max(MAX_ID_LENGTH).optional(),
+  sender: z.string().min(1).max(MAX_NAME_LENGTH).optional(),
   text: z
     .string()
     .min(1)
+    .max(MAX_CHAT_TEXT_LENGTH)
     .refine((t) => t.trim().length > 0, "text must not be blank"),
-  timestamp: z.string().optional(),
+  timestamp: z.string().max(MAX_ID_LENGTH).optional(),
 });
 export type ChatSendPayload = z.infer<typeof ChatSendPayloadSchema>;
 
 export const CityPayloadSchema = z.object({
-  name: z.string(),
-  country: z.string(),
-  lat: z.number().finite(),
-  lng: z.number().finite(),
-  timezone: z.string(),
+  name: z.string().min(1).max(MAX_CITY_NAME_LENGTH),
+  country: z.string().max(MAX_CITY_NAME_LENGTH),
+  lat: z.number().finite().min(-90).max(90),
+  lng: z.number().finite().min(-180).max(180),
+  timezone: z.string().min(1).max(MAX_TIMEZONE_LENGTH),
 });
 export type CityPayload = z.infer<typeof CityPayloadSchema>;
 
@@ -109,6 +147,7 @@ export const IdentityUpdatePayloadSchema = z.object({
   displayName: z
     .string()
     .min(1)
+    .max(MAX_NAME_LENGTH)
     .refine((s) => s.trim().length > 0, "displayName must not be blank"),
   city: CityPayloadSchema,
 });
@@ -220,10 +259,16 @@ export const StateTimerSchema = z.object({
 });
 export type StateTimer = z.infer<typeof StateTimerSchema>;
 
-/** Persisted cinema row — the shared watch's only state is play/pause. */
+/**
+ * Persisted cinema row. `position` is the media time (seconds) stored with
+ * `updated_at`; a joiner that inherits `playing` advances the position by the
+ * wall-clock elapsed time since `updated_at` — the same wall-clock anchoring
+ * the shared timer uses.
+ */
 export const StateCinemaSchema = z.object({
   session_id: z.string(),
   playing: z.boolean(),
+  position: z.number().min(0).max(MAX_MEDIA_SECONDS),
   updated_at: z.number(),
 });
 export type StateCinema = z.infer<typeof StateCinemaSchema>;

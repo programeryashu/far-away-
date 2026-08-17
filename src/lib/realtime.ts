@@ -17,6 +17,8 @@ export class RealtimeClient {
   private listeners: Set<EventCallback> = new Set();
   private sessionId: string;
   private peerId: string;
+  /** Session-scoped peer secret from the join response (server verifies it on upgrade). */
+  private token: string;
   private status: ConnectionStatus = 'idle';
   private statusListeners: Set<(status: ConnectionStatus) => void> = new Set();
   private reconnectAttempts = 0;
@@ -37,9 +39,10 @@ export class RealtimeClient {
   private pendingEvents = new Map<number, ServerEnvelope>();
   private seqListeners: Set<(seq: number) => void> = new Set();
 
-  constructor(sessionId: string, peerId: string, initialSeq = 0) {
+  constructor(sessionId: string, peerId: string, token = '', initialSeq = 0) {
     this.sessionId = sessionId;
     this.peerId = peerId;
+    this.token = token;
     // The persisted seq is used as the dedup floor for events that arrive in
     // the window before the first snapshot; the snapshot itself is
     // authoritative and can only move this forward.
@@ -77,7 +80,9 @@ export class RealtimeClient {
     }
     this.setStatus('connecting');
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//${window.location.host}/ws?sessionId=${this.sessionId}&peerId=${this.peerId}`;
+    const url =
+      `${protocol}//${window.location.host}/ws?sessionId=${this.sessionId}` +
+      `&peerId=${this.peerId}&token=${encodeURIComponent(this.token)}`;
     this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {

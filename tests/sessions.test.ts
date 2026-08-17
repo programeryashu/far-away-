@@ -40,7 +40,7 @@ describe("Session API", () => {
     const joinRes = await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Alice", city: { name: "New York" } },
+      payload: { displayName: "Alice" },
     });
     expect(joinRes.statusCode).toBe(200);
     const joinBody = JSON.parse(joinRes.payload);
@@ -57,12 +57,12 @@ describe("Session API", () => {
     const first = await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Alice", city: {} },
+      payload: { displayName: "Alice" },
     });
     const second = await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Bob", city: {} },
+      payload: { displayName: "Bob" },
     });
     expect(JSON.parse(first.payload).role).toBe("a");
     expect(JSON.parse(second.payload).role).toBe("b");
@@ -78,7 +78,7 @@ describe("Session API", () => {
     const joinRes = await app.inject({
       method: "POST",
       url: "/api/sessions/join-by-code",
-      payload: { code, displayName: "Alice", city: { name: "Paris" } },
+      payload: { code, displayName: "Alice" },
     });
     expect(joinRes.statusCode).toBe(200);
     const body = JSON.parse(joinRes.payload);
@@ -96,12 +96,12 @@ describe("Session API", () => {
     const first = await app.inject({
       method: "POST",
       url: "/api/sessions/join-by-code",
-      payload: { code, displayName: "Alice", city: {} },
+      payload: { code, displayName: "Alice" },
     });
     const second = await app.inject({
       method: "POST",
       url: "/api/sessions/join-by-code",
-      payload: { code, displayName: "Bob", city: {} },
+      payload: { code, displayName: "Bob" },
     });
     expect(JSON.parse(first.payload).role).toBe("a");
     expect(JSON.parse(second.payload).role).toBe("b");
@@ -118,14 +118,14 @@ describe("Session API", () => {
     const lower = await app.inject({
       method: "POST",
       url: "/api/sessions/join-by-code",
-      payload: { code: code.toLowerCase(), displayName: "Alice", city: {} },
+      payload: { code: code.toLowerCase(), displayName: "Alice" },
     });
     expect(lower.statusCode).toBe(200);
 
     const unknown = await app.inject({
       method: "POST",
       url: "/api/sessions/join-by-code",
-      payload: { code: "ZZZZZZ", displayName: "Alice", city: {} },
+      payload: { code: "ZZZZZZ", displayName: "Alice" },
     });
     expect(unknown.statusCode).toBe(404);
   });
@@ -141,7 +141,7 @@ describe("Session API", () => {
     const joinRes = await app.inject({
       method: "POST",
       url: "/api/sessions/join-by-code",
-      payload: { code, displayName: "Alice", city: {} },
+      payload: { code, displayName: "Alice" },
     });
     expect(joinRes.statusCode).toBe(410);
   });
@@ -156,12 +156,12 @@ describe("Session API", () => {
     await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Alice", city: {} },
+      payload: { displayName: "Alice" },
     });
     await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Bob", city: {} },
+      payload: { displayName: "Bob" },
     });
 
     // Both peers are recent (last_seen fresh) — even though neither has a live
@@ -169,7 +169,7 @@ describe("Session API", () => {
     const joinRes = await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Charlie", city: {} },
+      payload: { displayName: "Charlie" },
     });
     expect(joinRes.statusCode).toBe(409);
   });
@@ -186,7 +186,7 @@ describe("Session API", () => {
         await app.inject({
           method: "POST",
           url: `/api/sessions/${id}/join`,
-          payload: { displayName: "Alice", city: {} },
+          payload: { displayName: "Alice" },
         })
       ).payload,
     );
@@ -195,7 +195,7 @@ describe("Session API", () => {
         await app.inject({
           method: "POST",
           url: `/api/sessions/${id}/join`,
-          payload: { displayName: "Bob", city: {} },
+          payload: { displayName: "Bob" },
         })
       ).payload,
     );
@@ -206,7 +206,7 @@ describe("Session API", () => {
     const joinRes = await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Charlie", city: {} },
+      payload: { displayName: "Charlie" },
     });
     expect(joinRes.statusCode).toBe(200);
     const body = JSON.parse(joinRes.payload);
@@ -237,14 +237,14 @@ describe("Session API", () => {
     const joinRes = await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Alice", city: {} },
+      payload: { displayName: "Alice" },
     });
-    const { peerId } = JSON.parse(joinRes.payload);
+    const { peerId, token } = JSON.parse(joinRes.payload);
 
     const leaveRes = await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/leave`,
-      payload: { peerId },
+      payload: { peerId, token },
     });
     expect(leaveRes.statusCode).toBe(200);
 
@@ -258,7 +258,7 @@ describe("Session API", () => {
     const codeJoin = await app.inject({
       method: "POST",
       url: "/api/sessions/join-by-code",
-      payload: { code, displayName: "Bob", city: {} },
+      payload: { code, displayName: "Bob" },
     });
     expect(codeJoin.statusCode).toBe(410);
   });
@@ -274,7 +274,7 @@ describe("Session API", () => {
     const joinRes = await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Alice", city: {} },
+      payload: { displayName: "Alice" },
     });
     expect(joinRes.statusCode).toBe(410);
     expect(JSON.parse(joinRes.payload).error).toBe("Session has expired");
@@ -290,18 +290,18 @@ describe("Session API", () => {
     await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Alice", city: {} },
+      payload: { displayName: "Alice" },
     });
     await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Bob", city: {} },
+      payload: { displayName: "Bob" },
     });
 
     const joinRes = await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Charlie", city: {} },
+      payload: { displayName: "Charlie" },
     });
     expect(joinRes.statusCode).toBe(409);
   });
@@ -331,14 +331,14 @@ describe("Session API", () => {
     await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Alice", city: {} },
+      payload: { displayName: "Alice" },
     });
     const bob = JSON.parse(
       (
         await app.inject({
           method: "POST",
           url: `/api/sessions/${id}/join`,
-          payload: { displayName: "Bob", city: {} },
+          payload: { displayName: "Bob" },
         })
       ).payload,
     );
@@ -346,7 +346,7 @@ describe("Session API", () => {
     const leaveRes = await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/leave`,
-      payload: { peerId: bob.peerId },
+      payload: { peerId: bob.peerId, token: bob.token },
     });
     expect(leaveRes.statusCode).toBe(200);
 
@@ -359,5 +359,108 @@ describe("Session API", () => {
     const state = JSON.parse(stateRes.payload);
     expect(state.peers.length).toBe(1);
     expect(state.peers[0].role).toBe("a");
+  });
+
+  it("issues a session-scoped token at join and never leaks it in state reads", async () => {
+    const createRes = await app.inject({ method: "POST", url: "/api/sessions" });
+    const { id } = JSON.parse(createRes.payload);
+
+    const joinRes = await app.inject({
+      method: "POST",
+      url: `/api/sessions/${id}/join`,
+      payload: { displayName: "Alice" },
+    });
+    const body = JSON.parse(joinRes.payload);
+    expect(typeof body.token).toBe("string");
+    expect(body.token.length).toBeGreaterThanOrEqual(24);
+
+    const stateRes = await app.inject({ method: "GET", url: `/api/sessions/${id}` });
+    expect(stateRes.payload).not.toContain(body.token);
+  });
+
+  it("rejects a leave with the wrong token — a leaked peerId cannot kick a peer", async () => {
+    const createRes = await app.inject({ method: "POST", url: "/api/sessions" });
+    const { id } = JSON.parse(createRes.payload);
+
+    const alice = JSON.parse(
+      (
+        await app.inject({ method: "POST", url: `/api/sessions/${id}/join`, payload: { displayName: "Alice" } })
+      ).payload,
+    );
+
+    const forged = await app.inject({
+      method: "POST",
+      url: `/api/sessions/${id}/leave`,
+      payload: { peerId: alice.peerId, token: "not-the-token" },
+    });
+    expect(forged.statusCode).toBe(403);
+
+    // Alice survived: the leave was refused and she is still a member.
+    const stateRes = await app.inject({ method: "GET", url: `/api/sessions/${id}` });
+    expect(stateRes.statusCode).toBe(200);
+    expect(JSON.parse(stateRes.payload).peers.length).toBe(1);
+
+    const noToken = await app.inject({
+      method: "POST",
+      url: `/api/sessions/${id}/leave`,
+      payload: { peerId: alice.peerId },
+    });
+    expect(noToken.statusCode).toBe(403);
+  });
+
+  it("generates 6-char codes from the unambiguous alphabet with high entropy", async () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 30; i++) {
+      const createRes = await app.inject({ method: "POST", url: "/api/sessions" });
+      const { code } = JSON.parse(createRes.payload);
+      expect(code).toMatch(/^[A-HJ-NP-Z2-9]{6}$/);
+      seen.add(code);
+    }
+    // 30 draws from ~1.07B codes must not collide (and each is random).
+    expect(seen.size).toBe(30);
+  });
+
+  it("rate-limits repeated failed code joins with 429 and Retry-After", async () => {
+    // 5 failures lock the IP for the window.
+    for (let i = 0; i < 5; i++) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/sessions/join-by-code",
+        payload: { code: "ZZZZZZ", displayName: "Alice" },
+      });
+      expect(res.statusCode).toBe(404);
+    }
+
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/api/sessions/join-by-code",
+      payload: { code: "ZZZZZZ", displayName: "Alice" },
+    });
+    expect(blocked.statusCode).toBe(429);
+    expect(Number(blocked.headers["retry-after"])).toBeGreaterThan(0);
+
+    // Even a VALID code is refused while locked — the lock is on attempts,
+    // not on the specific code being guessed.
+    const createRes = await app.inject({ method: "POST", url: "/api/sessions" });
+    const { code } = JSON.parse(createRes.payload);
+    const validButBlocked = await app.inject({
+      method: "POST",
+      url: "/api/sessions/join-by-code",
+      payload: { code, displayName: "Alice" },
+    });
+    expect(validButBlocked.statusCode).toBe(429);
+  });
+
+  it("does not count successful code joins toward the rate limit", async () => {
+    for (let i = 0; i < 8; i++) {
+      const createRes = await app.inject({ method: "POST", url: "/api/sessions" });
+      const { code } = JSON.parse(createRes.payload);
+      const join = await app.inject({
+        method: "POST",
+        url: "/api/sessions/join-by-code",
+        payload: { code, displayName: "Alice" },
+      });
+      expect(join.statusCode).toBe(200);
+    }
   });
 });

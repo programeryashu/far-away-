@@ -95,20 +95,20 @@ describe("WebSocket", () => {
     const joinA = await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Alice", city: { name: "San Francisco" } },
+      payload: { displayName: "Alice" },
     });
     const joinB = await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Bob", city: { name: "Tokyo" } },
+      payload: { displayName: "Bob" },
     });
-    const { peerId: peerA } = JSON.parse(joinA.payload) as { peerId: string };
-    const { peerId: peerB } = JSON.parse(joinB.payload) as { peerId: string };
-    return { id, peerA, peerB };
+    const { peerId: peerA, token: tokenA } = JSON.parse(joinA.payload) as { peerId: string; token: string };
+    const { peerId: peerB, token: tokenB } = JSON.parse(joinB.payload) as { peerId: string; token: string };
+    return { id, peerA, peerB, tokenA, tokenB };
   }
 
-  const wsUrl = (sessionId: string, peerId: string) =>
-    `ws://127.0.0.1:${port}/ws?sessionId=${sessionId}&peerId=${peerId}`;
+  const wsUrl = (sessionId: string, peerId: string, token: string) =>
+    `ws://127.0.0.1:${port}/ws?sessionId=${sessionId}&peerId=${peerId}&token=${encodeURIComponent(token)}`;
 
   it("should reject connection without session", async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
@@ -117,9 +117,9 @@ describe("WebSocket", () => {
   });
 
   it("should complete ping/pong and chat round-trips the client schema accepts", async () => {
-    const { id, peerA, peerB } = await createJoinedSession();
-    const wsA = new WebSocket(wsUrl(id, peerA));
-    const wsB = new WebSocket(wsUrl(id, peerB));
+    const { id, peerA, peerB, tokenA, tokenB } = await createJoinedSession();
+    const wsA = new WebSocket(wsUrl(id, peerA, tokenA));
+    const wsB = new WebSocket(wsUrl(id, peerB, tokenB));
 
     const connectedA = await waitForEvent(wsA, "connected");
     const connectedB = await waitForEvent(wsB, "connected");
@@ -151,13 +151,13 @@ describe("WebSocket", () => {
   });
 
   it("should preserve the role across a reconnect", async () => {
-    const { id, peerA } = await createJoinedSession();
-    const wsA = new WebSocket(wsUrl(id, peerA));
+    const { id, peerA, tokenA } = await createJoinedSession();
+    const wsA = new WebSocket(wsUrl(id, peerA, tokenA));
     const first = await waitForEvent(wsA, "connected");
     expect((first?.payload as { role?: string }).role).toBe("a");
     wsA.close();
 
-    const wsA2 = new WebSocket(wsUrl(id, peerA));
+    const wsA2 = new WebSocket(wsUrl(id, peerA, tokenA));
     const second = await waitForEvent(wsA2, "connected");
     expect((second?.payload as { role?: string }).role).toBe("a");
     expect(parseEnvelope(second)).not.toBeNull();
@@ -165,13 +165,13 @@ describe("WebSocket", () => {
   });
 
   it("should broadcast peer presence: join, leave, rejoin", async () => {
-    const { id, peerA, peerB } = await createJoinedSession();
-    const wsA = new WebSocket(wsUrl(id, peerA));
+    const { id, peerA, peerB, tokenA, tokenB } = await createJoinedSession();
+    const wsA = new WebSocket(wsUrl(id, peerA, tokenA));
     await waitForEvent(wsA, "connected");
 
     // B joins → A sees peer-joined with B's identity.
     const joinedPromise = waitForEvent(wsA, "peer-joined");
-    const wsB = new WebSocket(wsUrl(id, peerB));
+    const wsB = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsB, "connected");
     const joined = await joinedPromise;
     expect(joined).not.toBeNull();
@@ -187,7 +187,7 @@ describe("WebSocket", () => {
 
     // B rejoins → A sees peer-joined again.
     const rejoinedPromise = waitForEvent(wsA, "peer-joined");
-    const wsB2 = new WebSocket(wsUrl(id, peerB));
+    const wsB2 = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsB2, "connected");
     const rejoined = await rejoinedPromise;
     expect(rejoined).not.toBeNull();
@@ -198,9 +198,9 @@ describe("WebSocket", () => {
   });
 
   it("should deliver chat both ways, ack the sender, persist, and replay history on reconnect", async () => {
-    const { id, peerA, peerB } = await createJoinedSession();
-    const wsA = new WebSocket(wsUrl(id, peerA));
-    const wsB = new WebSocket(wsUrl(id, peerB));
+    const { id, peerA, peerB, tokenA, tokenB } = await createJoinedSession();
+    const wsA = new WebSocket(wsUrl(id, peerA, tokenA));
+    const wsB = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsA, "connected");
     await waitForEvent(wsB, "connected");
 
@@ -236,7 +236,7 @@ describe("WebSocket", () => {
 
     // B reconnects → catch-up replays history with both messages.
     wsB.close();
-    const wsB2 = new WebSocket(wsUrl(id, peerB));
+    const wsB2 = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsB2, "connected");
     const stateEvent = await requestState(wsB2, id, peerB);
     const history = (stateEvent?.payload as { messages?: { seq: number }[] }).messages ?? [];
@@ -247,9 +247,9 @@ describe("WebSocket", () => {
   });
 
   it("should broadcast and persist canvas strokes, then reset on clear", async () => {
-    const { id, peerA, peerB } = await createJoinedSession();
-    const wsA = new WebSocket(wsUrl(id, peerA));
-    const wsB = new WebSocket(wsUrl(id, peerB));
+    const { id, peerA, peerB, tokenA, tokenB } = await createJoinedSession();
+    const wsA = new WebSocket(wsUrl(id, peerA, tokenA));
+    const wsB = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsA, "connected");
     await waitForEvent(wsB, "connected");
 
@@ -278,9 +278,9 @@ describe("WebSocket", () => {
   });
 
   it("should relay timer events", async () => {
-    const { id, peerA, peerB } = await createJoinedSession();
-    const wsA = new WebSocket(wsUrl(id, peerA));
-    const wsB = new WebSocket(wsUrl(id, peerB));
+    const { id, peerA, peerB, tokenA, tokenB } = await createJoinedSession();
+    const wsA = new WebSocket(wsUrl(id, peerA, tokenA));
+    const wsB = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsA, "connected");
     await waitForEvent(wsB, "connected");
 
@@ -299,14 +299,14 @@ describe("WebSocket", () => {
     // Regression: a timer action attempted the instant the socket opens (the
     // earliest possible moment — the client's outbound queue flushes here)
     // must reach the peer exactly once and be persisted exactly once.
-    const { id, peerA, peerB } = await createJoinedSession();
-    const wsB = new WebSocket(wsUrl(id, peerB));
+    const { id, peerA, peerB, tokenA, tokenB } = await createJoinedSession();
+    const wsB = new WebSocket(wsUrl(id, peerB, tokenB));
     const bTimerPromise = waitForEvent(wsB, "timer");
     await waitForEvent(wsB, "connected");
 
     const endAt = Date.now() + 60000;
     const timer = { action: "start", endAt, remaining: 0 };
-    const wsA = new WebSocket(wsUrl(id, peerA));
+    const wsA = new WebSocket(wsUrl(id, peerA, tokenA));
     wsA.on("open", () => {
       // Sent before the server has even delivered `connected`.
       wsA.send(envelope(id, peerA, "timer", timer));
@@ -327,7 +327,7 @@ describe("WebSocket", () => {
 
     // A reconnecting peer's state catch-up shows the persisted timer once.
     wsB.close();
-    const wsB2 = new WebSocket(wsUrl(id, peerB));
+    const wsB2 = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsB2, "connected");
     const stateEvent = await requestState(wsB2, id, peerB);
     const catchUp = (stateEvent?.payload as { timer?: { action: string; end_at: number } }).timer;
@@ -348,18 +348,38 @@ describe("WebSocket", () => {
     const join = await app.inject({
       method: "POST",
       url: `/api/sessions/${id}/join`,
-      payload: { displayName: "Alice", city: {} },
+      payload: { displayName: "Alice" },
     });
-    const { peerId } = JSON.parse(join.payload) as { peerId: string };
+    const { peerId, token } = JSON.parse(join.payload) as { peerId: string; token: string };
 
-    const ws = new WebSocket(wsUrl(id, peerId));
+    const ws = new WebSocket(wsUrl(id, peerId, token));
     const code = await waitForClose(ws);
     expect(code).toBe(4000);
   });
 
+  it("rejects a WebSocket upgrade without or with the wrong peer token", async () => {
+    const { id, peerA, tokenA } = await createJoinedSession();
+
+    // No token at all.
+    const noToken = new WebSocket(`ws://127.0.0.1:${port}/ws?sessionId=${id}&peerId=${peerA}`);
+    expect(await waitForClose(noToken)).toBe(4000);
+
+    // Someone who only knows the peerId (no token) cannot act as that peer.
+    const forged = new WebSocket(
+      `ws://127.0.0.1:${port}/ws?sessionId=${id}&peerId=${peerA}&token=forged-token`,
+    );
+    expect(await waitForClose(forged)).toBe(4000);
+
+    // The legitimate token still connects.
+    const legit = new WebSocket(wsUrl(id, peerA, tokenA));
+    const connected = await waitForEvent(legit, "connected");
+    expect(connected).not.toBeNull();
+    legit.close();
+  });
+
   it("should not crash on malformed frames and should error on unknown events", async () => {
-    const { id, peerA } = await createJoinedSession();
-    const wsA = new WebSocket(wsUrl(id, peerA));
+    const { id, peerA, tokenA } = await createJoinedSession();
+    const wsA = new WebSocket(wsUrl(id, peerA, tokenA));
     await waitForEvent(wsA, "connected");
 
     wsA.send("this is not json");
@@ -379,8 +399,8 @@ describe("WebSocket", () => {
   });
 
   it("should reject a wrong payload for a known event without crashing the socket", async () => {
-    const { id, peerA } = await createJoinedSession();
-    const wsA = new WebSocket(wsUrl(id, peerA));
+    const { id, peerA, tokenA } = await createJoinedSession();
+    const wsA = new WebSocket(wsUrl(id, peerA, tokenA));
     await waitForEvent(wsA, "connected");
 
     const expectError = async (payload: unknown, expected: string) => {
@@ -424,16 +444,16 @@ describe("WebSocket", () => {
   });
 
   it("should relay cinema events between peers and reject invalid payloads", async () => {
-    const { id, peerA, peerB } = await createJoinedSession();
-    const wsA = new WebSocket(wsUrl(id, peerA));
-    const wsB = new WebSocket(wsUrl(id, peerB));
+    const { id, peerA, peerB, tokenA, tokenB } = await createJoinedSession();
+    const wsA = new WebSocket(wsUrl(id, peerA, tokenA));
+    const wsB = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsA, "connected");
     await waitForEvent(wsB, "connected");
 
     const cinemaPromise = waitForEvent(wsB, "cinema");
-    wsA.send(envelope(id, peerA, "cinema", { playing: true }));
+    wsA.send(envelope(id, peerA, "cinema", { playing: true, position: 0 }));
     const cinema = await cinemaPromise;
-    expect(cinema?.payload).toEqual({ playing: true });
+    expect(cinema?.payload).toEqual({ playing: true, position: 0 });
     expect(parseEnvelope(cinema)).not.toBeNull();
 
     const errPromise = waitForEvent(wsA, "error");
@@ -446,9 +466,9 @@ describe("WebSocket", () => {
   });
 
   it("should persist timer state and replay it to a reconnecting peer", async () => {
-    const { id, peerA, peerB } = await createJoinedSession();
-    const wsA = new WebSocket(wsUrl(id, peerA));
-    const wsB = new WebSocket(wsUrl(id, peerB));
+    const { id, peerA, peerB, tokenA, tokenB } = await createJoinedSession();
+    const wsA = new WebSocket(wsUrl(id, peerA, tokenA));
+    const wsB = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsA, "connected");
     await waitForEvent(wsB, "connected");
 
@@ -459,7 +479,7 @@ describe("WebSocket", () => {
 
     // Reconnecting B must receive the persisted timer in state catch-up.
     wsB.close();
-    const wsB2 = new WebSocket(wsUrl(id, peerB));
+    const wsB2 = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsB2, "connected");
     const stateEvent = await requestState(wsB2, id, peerB);
     const timer = (stateEvent?.payload as { timer?: { action: string; end_at: number } }).timer;
@@ -471,9 +491,9 @@ describe("WebSocket", () => {
   });
 
   it("should update identity, broadcast it to the peer, and persist it for state catch-up", async () => {
-    const { id, peerA, peerB } = await createJoinedSession();
-    const wsA = new WebSocket(wsUrl(id, peerA));
-    const wsB = new WebSocket(wsUrl(id, peerB));
+    const { id, peerA, peerB, tokenA, tokenB } = await createJoinedSession();
+    const wsA = new WebSocket(wsUrl(id, peerA, tokenA));
+    const wsB = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsA, "connected");
     await waitForEvent(wsB, "connected");
 
@@ -488,7 +508,7 @@ describe("WebSocket", () => {
 
     // Persisted in the DB → reconnecting B's state catch-up sees the new name.
     wsB.close();
-    const wsB2 = new WebSocket(wsUrl(id, peerB));
+    const wsB2 = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsB2, "connected");
     const stateEvent = await requestState(wsB2, id, peerB);
     const peers = (stateEvent?.payload as { peers?: { role: string; display_name: string; city_json: string }[] }).peers ?? [];
@@ -501,9 +521,9 @@ describe("WebSocket", () => {
   });
 
   it("replays missed events in order to a reconnecting peer with no duplicates, then live events continue", async () => {
-    const { id, peerA, peerB } = await createJoinedSession();
-    const wsA = new WebSocket(wsUrl(id, peerA));
-    const wsB = new WebSocket(wsUrl(id, peerB));
+    const { id, peerA, peerB, tokenA, tokenB } = await createJoinedSession();
+    const wsA = new WebSocket(wsUrl(id, peerA, tokenA));
+    const wsB = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsA, "connected");
     await waitForEvent(wsB, "connected");
 
@@ -522,13 +542,13 @@ describe("WebSocket", () => {
     const city = { name: "Paris", country: "France", lat: 48.8566, lng: 2.3522, timezone: "Europe/Paris" };
     wsA.send(envelope(id, peerA, "identity-update", { displayName: "Alicia", city }));
     wsA.send(envelope(id, peerA, "timer", { action: "start", endAt: Date.now() + 60000, remaining: 0 }));
-    wsA.send(envelope(id, peerA, "cinema", { playing: true }));
+    wsA.send(envelope(id, peerA, "cinema", { playing: true, position: 0 }));
     wsA.send(envelope(id, peerA, "canvas-stroke", { points: [{ x: 1, y: 2 }], color: "#fff" }));
 
     // Let the server persist everything, then B reconnects and requests a
     // replay strictly after the seq it already applied (1).
     await new Promise((r) => setTimeout(r, 250));
-    const wsB2 = new WebSocket(wsUrl(id, peerB));
+    const wsB2 = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsB2, "connected");
     const frames: { event: string; seq: number; payload: Record<string, unknown> }[] = [];
     wsB2.on("message", (raw: Buffer) => {
@@ -560,7 +580,7 @@ describe("WebSocket", () => {
     expect((live?.payload as { action?: string }).action).toBe("pause");
 
     // A fresh client still gets the authoritative snapshot with snapshotSeq.
-    const wsB3 = new WebSocket(wsUrl(id, peerB));
+    const wsB3 = new WebSocket(wsUrl(id, peerB, tokenB));
     await waitForEvent(wsB3, "connected");
     const stateEvent = await requestState(wsB3, id, peerB);
     const sp = stateEvent?.payload as {
@@ -584,12 +604,12 @@ describe("WebSocket", () => {
   });
 
   it("should report live presence to a newly connected peer and after reconnect", async () => {
-    const { id, peerA, peerB } = await createJoinedSession();
-    const wsA = new WebSocket(wsUrl(id, peerA));
+    const { id, peerA, peerB, tokenA, tokenB } = await createJoinedSession();
+    const wsA = new WebSocket(wsUrl(id, peerA, tokenA));
     await waitForEvent(wsA, "connected");
 
     // B connecting sees that A is online right now (socket truth).
-    const wsB = new WebSocket(wsUrl(id, peerB));
+    const wsB = new WebSocket(wsUrl(id, peerB, tokenB));
     const bJoinedPromise = waitForEvent(wsB, "peer-joined");
     await waitForEvent(wsB, "connected");
     const bJoined = await bJoinedPromise;
@@ -597,7 +617,7 @@ describe("WebSocket", () => {
 
     // A reconnects (reload) while B is online → A's new socket sees B.
     wsA.close();
-    const wsA2 = new WebSocket(wsUrl(id, peerA));
+    const wsA2 = new WebSocket(wsUrl(id, peerA, tokenA));
     const aReloadPromise = waitForEvent(wsA2, "peer-joined");
     await waitForEvent(wsA2, "connected");
     const aReload = await aReloadPromise;

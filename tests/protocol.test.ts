@@ -65,7 +65,7 @@ const validStatePayload = {
   ],
   canvas: { session_id: "s1", strokes_json: "[]", updated_at: 1 },
   timer: { session_id: "s1", action: "start", end_at: 100, remaining: 0, updated_at: 1 },
-  cinema: { session_id: "s1", playing: true, updated_at: 1 },
+  cinema: { session_id: "s1", playing: true, position: 12, updated_at: 1 },
   snapshotSeq: 0,
 };
 
@@ -168,7 +168,8 @@ describe("client → server envelopes", () => {
     ["canvas-stroke", { points: [{ x: 1, y: 2 }, { x: 3, y: 4 }], color: "#fff" }],
     ["canvas-clear", {}],
     ["timer", { action: "start", endAt: 1_700_000_100_000, remaining: 0 }],
-    ["cinema", { playing: true }],
+    ["cinema", { playing: true, position: 0 }],
+    ["cinema", { playing: false, position: 45.5 }],
     ["identity-update", { displayName: "Alicia", city: validCity }],
     ["state-request", { afterSeq: 0 }],
     ["state-request", { afterSeq: 42 }],
@@ -214,6 +215,78 @@ describe("client → server envelopes", () => {
   });
 });
 
+describe("payload limits (enforced on both sides by the same schemas)", () => {
+  it("accepts a chat message at exactly the max length and rejects one over", () => {
+    const max = "a".repeat(2_000);
+    expect(parseClientEnvelope(frame("chat", { text: max }))).not.toBeNull();
+    expect(parseClientEnvelope(frame("chat", { text: max + "a" }))).toBeNull();
+  });
+
+  it("accepts a display name at exactly the max length and rejects one over", () => {
+    const max = "a".repeat(40);
+    expect(
+      parseClientEnvelope(frame("identity-update", { displayName: max, city: validCity })),
+    ).not.toBeNull();
+    expect(
+      parseClientEnvelope(frame("identity-update", { displayName: max + "a", city: validCity })),
+    ).toBeNull();
+  });
+
+  it("accepts a stroke at exactly the max point count and rejects one over", () => {
+    const maxPoints = Array.from({ length: 512 }, (_, i) => ({ x: i, y: i }));
+    expect(
+      parseClientEnvelope(frame("canvas-stroke", { points: maxPoints, color: "#fff" })),
+    ).not.toBeNull();
+    expect(
+      parseClientEnvelope(frame("canvas-stroke", { points: [...maxPoints, { x: 1, y: 1 }], color: "#fff" })),
+    ).toBeNull();
+  });
+
+  it("rejects canvas coordinates outside the bounded range", () => {
+    expect(
+      parseClientEnvelope(frame("canvas-stroke", { points: [{ x: 100_001, y: 0 }], color: "#fff" })),
+    ).toBeNull();
+    expect(
+      parseClientEnvelope(frame("canvas-stroke", { points: [{ x: 0, y: -100_001 }], color: "#fff" })),
+    ).toBeNull();
+  });
+
+  it("rejects a color string longer than the cap", () => {
+    expect(
+      parseClientEnvelope(frame("canvas-stroke", { points: [{ x: 1, y: 1 }], color: "c".repeat(33) })),
+    ).toBeNull();
+  });
+
+  it("accepts timer/cinema values at the cap and rejects one over", () => {
+    expect(
+      parseClientEnvelope(frame("timer", { action: "start", endAt: Date.now(), remaining: 86_400 })),
+    ).not.toBeNull();
+    expect(
+      parseClientEnvelope(frame("timer", { action: "start", endAt: Date.now(), remaining: 86_401 })),
+    ).toBeNull();
+    expect(parseClientEnvelope(frame("cinema", { playing: true, position: 86_400 }))).not.toBeNull();
+    expect(parseClientEnvelope(frame("cinema", { playing: true, position: 86_401 }))).toBeNull();
+    expect(parseClientEnvelope(frame("cinema", { playing: true, position: -1 }))).toBeNull();
+  });
+
+  it("rejects cities with out-of-range or oversize fields", () => {
+    expect(
+      parseClientEnvelope(frame("identity-update", { displayName: "A", city: { ...validCity, lat: 91 } })),
+    ).toBeNull();
+    expect(
+      parseClientEnvelope(frame("identity-update", { displayName: "A", city: { ...validCity, lng: -181 } })),
+    ).toBeNull();
+    expect(
+      parseClientEnvelope(frame("identity-update", { displayName: "A", city: { ...validCity, name: "x".repeat(101) } })),
+    ).toBeNull();
+  });
+
+  it("rejects absurd wall-clock timestamps and ping timestamps", () => {
+    // One millisecond past the 2100 cap.
+    expect(parseClientEnvelope(frame("ping", { ts: 4_102_444_800_001 }))).toBeNull();
+  });
+});
+
 describe("server → client envelopes", () => {
   const validFrames: [string, unknown][] = [
     ["connected", { sessionId: "s1", peerId: "p1", role: "a" }],
@@ -227,7 +300,7 @@ describe("server → client envelopes", () => {
     ["canvas-stroke", { points: [{ x: 1, y: 2 }], color: "#fff" }],
     ["canvas-clear", {}],
     ["timer", { action: "pause", endAt: 0, remaining: 488 }],
-    ["cinema", { playing: false }],
+    ["cinema", { playing: false, position: 33.2 }],
     ["error", { message: "invalid envelope" }],
   ];
 

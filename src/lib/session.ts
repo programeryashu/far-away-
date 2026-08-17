@@ -3,6 +3,12 @@ export interface ClientSession {
   peerId: string;
   role: 'a' | 'b';
   /**
+   * Session-scoped peer token from the join response. Authorizes the
+   * WebSocket upgrade and leave for this peer; never shared with the other
+   * peer. Absent for legacy sessions that predate tokens (they must re-join).
+   */
+  token?: string;
+  /**
    * Human-friendly share code (from the create-session response). Persisted so
    * a reload can re-share the same short link; absent for legacy sessions that
    * predate code sharing, which fall back to the session UUID.
@@ -47,6 +53,7 @@ function isClientSession(value: unknown): value is ClientSession {
     typeof v.sessionId === 'string' &&
     typeof v.peerId === 'string' &&
     (v.role === 'a' || v.role === 'b') &&
+    (v.token === undefined || typeof v.token === 'string') &&
     (v.code === undefined || typeof v.code === 'string') &&
     (v.lastAppliedEventSeq === undefined ||
       (typeof v.lastAppliedEventSeq === 'number' && v.lastAppliedEventSeq >= 0))

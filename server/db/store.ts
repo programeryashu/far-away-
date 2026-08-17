@@ -119,12 +119,13 @@ export class Store {
     role: "a" | "b",
     displayName: string,
     cityJson: string,
+    tokenHash = "",
   ) {
     this.db
       .prepare(
-        "INSERT INTO peers (id, session_id, role, display_name, city_json, joined_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO peers (id, session_id, role, display_name, city_json, joined_at, last_seen, token_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(id, sessionId, role, displayName, cityJson, Date.now(), Date.now());
+      .run(id, sessionId, role, displayName, cityJson, Date.now(), Date.now(), tokenHash);
   }
 
   getPeer(id: string): Peer | null {
@@ -242,16 +243,16 @@ export class Store {
     return row ?? null;
   }
 
-  // Cinema methods — the shared watch's only state is play/pause, persisted
-  // so a fresh joiner inherits it from the authoritative snapshot (the event
-  // log alone cannot restore it for an afterSeq=0 client).
-  upsertCinemaState(sessionId: string, playing: boolean) {
+  // Cinema methods — the shared watch's state is play/pause plus the media
+  // position, persisted so a fresh joiner inherits it from the authoritative
+  // snapshot (the event log alone cannot restore it for an afterSeq=0 client).
+  upsertCinemaState(sessionId: string, playing: boolean, position: number) {
     this.db
       .prepare(
-        "INSERT INTO cinema_state (session_id, playing, updated_at) VALUES (?, ?, ?) " +
-          "ON CONFLICT(session_id) DO UPDATE SET playing = excluded.playing, updated_at = excluded.updated_at",
+        "INSERT INTO cinema_state (session_id, playing, position, updated_at) VALUES (?, ?, ?, ?) " +
+          "ON CONFLICT(session_id) DO UPDATE SET playing = excluded.playing, position = excluded.position, updated_at = excluded.updated_at",
       )
-      .run(sessionId, playing ? 1 : 0, Date.now());
+      .run(sessionId, playing ? 1 : 0, position, Date.now());
   }
 
   getCinemaState(sessionId: string): CinemaState | null {
@@ -259,11 +260,18 @@ export class Store {
     // playing so the normalization below is intentional, then mapped to the
     // boolean the schema and the rest of the app expect.
     const row = this.db
-      .prepare("SELECT session_id, playing, updated_at FROM cinema_state WHERE session_id = ?")
+      .prepare("SELECT session_id, playing, position, updated_at FROM cinema_state WHERE session_id = ?")
       .get(sessionId) as unknown as
-      | { session_id: string; playing: number; updated_at: number }
+      | { session_id: string; playing: number; position: number; updated_at: number }
       | undefined;
-    return row ? { session_id: row.session_id, playing: row.playing === 1, updated_at: row.updated_at } : null;
+    return row
+      ? {
+          session_id: row.session_id,
+          playing: row.playing === 1,
+          position: row.position,
+          updated_at: row.updated_at,
+        }
+      : null;
   }
 
   // Identity

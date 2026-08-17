@@ -163,7 +163,7 @@ describe('LocalConnection', () => {
     connB.onEvent((e) => received.push(e));
 
     connA.send('chat', { id: 'c1', sender: 'Alice', text: 'hi' });
-    connA.send('cinema', { playing: true });
+    connA.send('cinema', { playing: true, position: 12.5 });
     connA.send('timer', { action: 'start', endAt: 1000, remaining: 0 });
     connA.send('canvas-stroke', { points: [{ x: 1, y: 2 }], color: '#fff' });
     connA.send('canvas-clear', {});
@@ -184,6 +184,10 @@ describe('LocalConnection', () => {
     const timer = received[2];
     if (timer.event === 'timer') {
       expect(timer.payload).toEqual({ action: 'start', endAt: 1000, remaining: 0 });
+    }
+    const cinema = received[1];
+    if (cinema.event === 'cinema') {
+      expect(cinema.payload).toEqual({ playing: true, position: 12.5 });
     }
   });
 
@@ -279,7 +283,7 @@ describe('LocalConnection', () => {
 });
 
 describe('RemoteConnection', () => {
-  const session: ClientSession = { sessionId: 's1', peerId: 'p1', role: 'a' };
+  const session: ClientSession = { sessionId: 's1', peerId: 'p1', role: 'a', token: 'tok-abc' };
 
   beforeEach(() => {
     FakeWebSocket.instances = [];
@@ -295,6 +299,16 @@ describe('RemoteConnection', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it('authorizes the socket with the session token', () => {
+    const conn = new RemoteConnection(session);
+    conn.start();
+    const ws = FakeWebSocket.instances[0];
+    expect(ws.url).toContain('sessionId=s1');
+    expect(ws.url).toContain('peerId=p1');
+    expect(ws.url).toContain('token=tok-abc');
+    conn.stop();
   });
 
   it('forwards status and events from the realtime client', () => {

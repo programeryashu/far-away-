@@ -51,7 +51,7 @@ export type SyncMessage =
   | { type: 'canvas-stroke'; payload: StrokePayload }
   | { type: 'canvas-clear' }
   | { type: 'canvas-drawing'; active: boolean }
-  | { type: 'cinema'; playing: boolean }
+  | { type: 'cinema'; playing: boolean; position: number }
   | { type: 'timer'; payload: TimerPayload }
   | { type: 'ping'; ts: number }
   | { type: 'pong'; ts: number };
@@ -177,8 +177,8 @@ export class OrbitSync {
   sendCanvasDrawing(active: boolean): void {
     this.send({ type: 'canvas-drawing', active });
   }
-  sendCinema(playing: boolean): void {
-    this.send({ type: 'cinema', playing });
+  sendCinema(playing: boolean, position: number): void {
+    this.send({ type: 'cinema', playing, position });
   }
   sendTimer(payload: TimerPayload): void {
     this.send({ type: 'timer', payload });

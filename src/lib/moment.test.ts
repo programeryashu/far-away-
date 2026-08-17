@@ -179,6 +179,34 @@ describe('requestMomentRecommendation', () => {
       'cannot reach the recommendation service',
     );
   });
+
+  it('times out a hung request so the UI can fall back instead of waiting forever', async () => {
+    vi.useFakeTimers();
+    try {
+      // A fetch that would hang forever — but honors the abort signal.
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          (_url: string, init?: { signal?: AbortSignal }) =>
+            new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () =>
+                reject(new DOMException('Aborted', 'AbortError')),
+              );
+            }),
+        ),
+      );
+      const pending = requestMomentRecommendation(facts.context);
+      // Nothing settles before the timeout…
+      const early = await Promise.race([pending.then(() => 'settled'), Promise.resolve('pending')]);
+      expect(early).toBe('pending');
+      // …and the abort fires at the deadline.
+      await vi.advanceTimersByTimeAsync(8_000);
+      await expect(pending).rejects.toThrow('cannot reach the recommendation service');
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('recommendation cache', () => {

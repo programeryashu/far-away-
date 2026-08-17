@@ -9,6 +9,7 @@ import {
   type MomentResponse,
 } from '../../shared/moment';
 import { computeLiveWindow, getUTCOffsetHours } from './time';
+import { haversineKm } from './geo';
 import type { CityData } from './cities';
 
 /**
@@ -23,24 +24,11 @@ import type { CityData } from './cities';
 
 const API_URL = '/api/shared-moment/recommend';
 
-/** Great-circle distance in km (haversine) — the same math the UI shows. */
-export function haversineKm(
-  lat1: number,
-  lng1: number,
-  lat2: number,
-  lng2: number,
-): number {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLng / 2) *
-      Math.sin(dLng / 2);
-  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+/** A recommendation is advisory: the UI must never wait on it indefinitely. */
+const REQUEST_TIMEOUT_MS = 8_000;
+
+// Re-exported for existing callers; the implementation lives in lib/geo.
+export { haversineKm };
 
 function formatLocalTime(timezone: string, now: Date): string {
   try {
@@ -148,20 +136,27 @@ export function buildMomentFacts(
 /**
  * Ask the server for a recommendation. The response is validated against the
  * shared schema — malformed output fails loudly so the caller can fall back.
+ * Bounded by an abort timeout so the UI can never hang on "thinking": a slow
+ * or stuck request falls through to the deterministic fallback.
  */
 export async function requestMomentRecommendation(
   context: MomentContext,
   session?: { sessionId: string; peerId: string } | null,
 ): Promise<MomentResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let res: Response;
   try {
     res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...context, ...(session ?? {}) }),
+      signal: controller.signal,
     });
   } catch {
     throw new Error('cannot reach the recommendation service');
+  } finally {
+    clearTimeout(timer);
   }
   if (!res.ok) throw new Error(`recommendation request failed (${res.status})`);
   const body: unknown = await res.json();

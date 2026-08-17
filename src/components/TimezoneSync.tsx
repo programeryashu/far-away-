@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Sun, Moon, Briefcase, Coffee } from 'lucide-react';
 import { getUTCOffsetHours } from '../lib/time';
 
 interface TimezoneSyncProps {
@@ -9,6 +8,26 @@ interface TimezoneSyncProps {
   nameB: string;
 }
 
+/** Day-model shared with the live-window math: awake 7–23, working 9–17. */
+function statusAt(hour: number): { label: string; kind: 'sleep' | 'work' | 'free' } {
+  const h = Math.floor((hour + 24) % 24);
+  if (h >= 23 || h < 7) return { label: 'Sleeping', kind: 'sleep' };
+  if (h >= 9 && h < 17) return { label: 'Working', kind: 'work' };
+  return { label: 'Free', kind: 'free' };
+}
+
+const STATUS_FILL: Record<'sleep' | 'work' | 'free', string> = {
+  sleep: 'rgba(255, 255, 255, 0.05)',
+  work: 'rgba(224, 123, 180, 0.16)',
+  free: 'rgba(62, 207, 174, 0.16)',
+};
+
+/**
+ * The day ribbon — 24 hours seen twice, once for each person. Time is
+ * Orbit's visual language: this is a planning surface, not a clock widget.
+ * The slider scrubs "what if it were another hour" without touching
+ * anything live.
+ */
 export const TimezoneSync: React.FC<TimezoneSyncProps> = ({
   cityA,
   cityB,
@@ -30,263 +49,187 @@ export const TimezoneSync: React.FC<TimezoneSyncProps> = ({
   const offsetB = getUTCOffsetHours(cityB.timezone, time);
   const hourDiff = offsetB - offsetA;
 
-  // Formatting strings (defensive: an unexpected invalid zone must never crash the render)
   const formatTime = (date: Date, timeZone: string) => {
     try {
       return date.toLocaleTimeString('en-US', {
         timeZone,
         hour: '2-digit',
         minute: '2-digit',
-        second: '2-digit',
-        hour12: true
+        hour12: false
       });
     } catch {
-      return date.toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: true
-      });
+      return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
     }
   };
 
   const formatDate = (date: Date, timeZone: string) => {
     try {
-      return date.toLocaleDateString('en-US', {
-        timeZone,
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric'
-      });
+      return date.toLocaleDateString('en-US', { timeZone, weekday: 'short' });
     } catch {
-      return date.toLocaleDateString('en-US', {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric'
-      });
+      return date.toLocaleDateString('en-US', { weekday: 'short' });
     }
   };
 
-  // Determine sleep/work/free status based on local hour
-  const getActivityStatus = (hour: number) => {
-    const rounded = Math.floor((hour + 24) % 24);
-    if (rounded >= 23 || rounded < 7) {
-      return { label: 'Sleeping', Icon: Moon, class: 'status-sleep' };
-    } else if (rounded >= 9 && rounded < 17) {
-      return { label: 'Working', Icon: Briefcase, class: 'status-work' };
-    } else {
-      return { label: 'Free time', Icon: Coffee, class: 'status-free' };
-    }
-  };
-
-  // Live hours
-  const liveHourA = (time.getUTCHours() + offsetA + 24) % 24;
-
+  const liveHourA = (time.getUTCHours() + time.getUTCMinutes() / 60 + offsetA + 24) % 24;
   const currentHourA = useSlider ? sliderHour : liveHourA;
   const currentHourB = (currentHourA + hourDiff + 24) % 24;
 
-  const statusA = getActivityStatus(currentHourA);
-  const statusB = getActivityStatus(currentHourB);
+  const statusA = statusAt(currentHourA);
+  const statusB = statusAt(currentHourB);
+  const overlapNow = statusA.kind !== 'sleep' && statusB.kind !== 'sleep';
 
-  // Check if both are awake (7am to 11pm)
-  const isOverlap = 
-    Math.floor((currentHourA + 24) % 24) >= 7 && 
-    Math.floor((currentHourA + 24) % 24) < 23 &&
-    Math.floor((currentHourB + 24) % 24) >= 7 && 
-    Math.floor((currentHourB + 24) % 24) < 23;
+  // One cell per hour on a shared 0–24 axis in A's local time. B's cell for
+  // the same slot shows B's status at that moment — the two ribbons align,
+  // and the gaps between the colored regions are the real distance.
+  const hoursA = Array.from({ length: 24 }, (_, h) => h);
+  const hoursB = hoursA.map((h) => (h + hourDiff + 24) % 24);
+
+  const labelA = nameA || 'User A';
+  const labelB = nameB || 'User B';
 
   return (
-    <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>        <h2 style={{ fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Clock size={18} color="var(--text-secondary)" />
-          Time Overlap
-        </h2>
-
-      {/* Clocks */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-        {/* User A Clock */}
-        <div
-          style={{
-            background: 'rgba(255,255,255,0.02)',
-            border: '1px solid var(--border-glass)',
-            padding: '16px',
-            borderRadius: 'var(--radius-md)',
-            textAlign: 'center'
-          }}
+    <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      <div className="flex-between" style={{ gap: 'var(--space-3)' }}>
+        <h2 className="section-title">Plan around time</h2>
+        <button
+          onClick={() => setUseSlider(!useSlider)}
+          className="btn btn-outline"
+          style={{ padding: '4px 12px', fontSize: 'var(--text-meta-size)' }}
+          aria-pressed={useSlider}
         >
-          <div style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-            {nameA || 'User A'}'s Local Time
+          {useSlider ? 'Back to now' : 'Try another hour'}
+        </button>
+      </div>
+
+      {/* The two lanes */}
+      <div aria-hidden="true" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {[
+          { hours: hoursA, own: hoursA.map((h) => h), key: 'a' },
+          { hours: hoursB, own: hoursA, key: 'b' },
+        ].map(({ hours, own, key }) => (
+          <div key={key} style={{ display: 'grid', gridTemplateColumns: 'repeat(24, 1fr)', gap: '2px' }}>
+            {hours.map((h, i) => {
+              const status = statusAt(h);
+              const isNow = Math.floor(useSlider ? sliderHour : liveHourA) === own[i];
+              return (
+                <div
+                  key={i}
+                  style={{
+                    height: '14px',
+                    borderRadius: '2px',
+                    background: STATUS_FILL[status.kind],
+                    outline: isNow ? '1.5px solid var(--text-primary)' : 'none',
+                    outlineOffset: isNow ? '1px' : 0,
+                  }}
+                />
+              );
+            })}
           </div>
-          <div style={{ fontSize: '24px', fontWeight: 700, margin: '6px 0', fontFamily: 'monospace' }}>
-            {formatTime(time, cityA.timezone)}
+        ))}
+        {/* Hour scale */}
+        <div
+          className="tabular"
+          style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted)' }}
+        >
+          {/* Midnight and noon both read "12a"; index-keyed so the two
+              occurrences are distinct React children. */}
+          {['12a', '6a', '12p', '6p', '12a'].map((t, i) => (
+            <span key={`${t}-${i}`}>{t}</span>
+          ))}
+        </div>
+      </div>
+
+      {/* What the lanes mean right now */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: 'var(--space-3)',
+          fontSize: 'var(--text-label-size)',
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 'var(--text-meta-size)' }}>
+            {labelA} · {cityA.name}
           </div>
-          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            {formatDate(time, cityA.timezone)}
+          <div className="tabular" style={{ fontWeight: 600, marginTop: '2px' }}>
+            {formatTime(time, cityA.timezone)}{' '}
+            <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>{formatDate(time, cityA.timezone)}</span>
           </div>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            UTC {offsetA >= 0 ? '+' : ''}{offsetA.toFixed(1)}
+          <div style={{ color: 'var(--text-muted)', fontSize: 'var(--text-meta-size)', marginTop: '2px' }}>
+            <span className={`status-${statusA.kind}`} style={{ fontWeight: 500 }}>{statusA.label}</span>
+            {' · '}UTC{offsetA >= 0 ? '+' : ''}{offsetA.toFixed(1)}
           </div>
         </div>
-
-        {/* User B Clock */}
-        <div
-          style={{
-            background: 'rgba(255,255,255,0.02)',
-            border: '1px solid var(--border-glass)',
-            padding: '16px',
-            borderRadius: 'var(--radius-md)',
-            textAlign: 'center'
-          }}
-        >
-          <div style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-            {nameB || 'User B'}'s Local Time
+        <div style={{ minWidth: 0 }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 'var(--text-meta-size)' }}>
+            {labelB} · {cityB.name}
           </div>
-          <div style={{ fontSize: '24px', fontWeight: 700, margin: '6px 0', fontFamily: 'monospace' }}>
-            {formatTime(time, cityB.timezone)}
+          <div className="tabular" style={{ fontWeight: 600, marginTop: '2px' }}>
+            {formatTime(time, cityB.timezone)}{' '}
+            <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>{formatDate(time, cityB.timezone)}</span>
           </div>
-          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            {formatDate(time, cityB.timezone)}
-          </div>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            UTC {offsetB >= 0 ? '+' : ''}{offsetB.toFixed(1)}
+          <div style={{ color: 'var(--text-muted)', fontSize: 'var(--text-meta-size)', marginTop: '2px' }}>
+            <span className={`status-${statusB.kind}`} style={{ fontWeight: 500 }}>{statusB.label}</span>
+            {' · '}UTC{offsetB >= 0 ? '+' : ''}{offsetB.toFixed(1)}
           </div>
         </div>
       </div>
 
-      {/* Difference Banner */}
-      <div
-        style={{
-          background: 'var(--bg-inset)',
-          border: '1px solid var(--border-glass)',
-          padding: '12px',
-          borderRadius: 'var(--radius-md)',
-          textAlign: 'center',
-          fontSize: '14px'
-        }}
-      >
-        {hourDiff === 0 ? (
-          <span>Users are in the <strong>same timezone</strong>. Coinciding matches are easy!</span>
-        ) : (
-          <span>
-            {nameB || 'User B'} is{' '}
-            <strong>
-              {Math.abs(hourDiff).toFixed(1)} hours{' '}
-              {hourDiff > 0 ? 'ahead of' : 'behind'}{' '}
-            </strong>
-            {nameA || 'User A'}.
-          </span>
-        )}
-      </div>
+      <hr className="hairline" />
 
-      {/* Timeline slider for finding overlaps */}
-      <div
-        style={{
-          borderTop: '1px solid var(--border-glass)',
-          paddingTop: '20px'
-        }}
-      >
-        <div className="flex-between" style={{ marginBottom: '12px' }}>
-          <span style={{ fontSize: '13px', fontWeight: 600 }}>Plan an overlap</span>
-          <button
-            onClick={() => setUseSlider(!useSlider)}
-            className="btn btn-outline"
-            style={{ padding: '4px 10px', fontSize: '11px', borderRadius: '4px' }}
-          >
-            {useSlider ? 'Reset to Live' : 'Simulate Hours'}
-          </button>
+      {/* The one-line answer + the scrub */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        <div style={{ fontSize: 'var(--text-label-size)', color: 'var(--text-secondary)' }}>
+          {hourDiff === 0 ? (
+            <>{labelA} and {labelB} share a timezone — every hour is a shared hour.</>
+          ) : (
+            <>
+              {labelB} is{' '}
+              <strong style={{ color: 'var(--text-primary)' }}>
+                {Math.abs(hourDiff).toFixed(1)} hours {hourDiff > 0 ? 'ahead of' : 'behind'}{' '}
+              </strong>
+              {labelA}.
+            </>
+          )}
         </div>
 
         {useSlider && (
-          <div style={{ marginBottom: '16px' }}>
+          <div>
+            <label htmlFor="hour-scrub" style={{ marginBottom: '4px' }}>
+              {labelA}'s hour: {Math.floor(sliderHour)}:00 → {labelB} at {Math.floor(currentHourB)}:00
+            </label>
             <input
+              id="hour-scrub"
               type="range"
               min="0"
               max="23"
               step="1"
               value={Math.floor(sliderHour)}
               onChange={(e) => setSliderHour(parseInt(e.target.value))}
-              style={{ accentColor: 'var(--primary)', cursor: 'pointer' }}
+              aria-label="Scrub the hour of the day"
             />
-            <div style={{ textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
-              Drag to plan a virtual meeting slot
-            </div>
           </div>
         )}
 
-        {/* Timeline Status Cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px' }}>
-          {/* User A Hour status */}
-          <div
-            style={{
-              padding: '12px',
-              borderRadius: 'var(--radius-sm)',
-              background: 'rgba(255,255,255,0.01)',
-              border: '1px solid var(--border-glass)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between'
-            }}
-          >
-            <div>
-              <span style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block' }}>{nameA || 'User A'}</span>
-              <span style={{ fontSize: '15px', fontWeight: 600 }}>{Math.floor(currentHourA)}:00</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <statusA.Icon size={14} />
-              <span className={statusA.class} style={{ fontSize: '13px', fontWeight: 500 }}>{statusA.label}</span>
-            </div>
-          </div>
-
-          {/* User B Hour status */}
-          <div
-            style={{
-              padding: '12px',
-              borderRadius: 'var(--radius-sm)',
-              background: 'rgba(255,255,255,0.01)',
-              border: '1px solid var(--border-glass)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between'
-            }}
-          >
-            <div>
-              <span style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block' }}>{nameB || 'User B'}</span>
-              <span style={{ fontSize: '15px', fontWeight: 600 }}>{Math.floor(currentHourB)}:00</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <statusB.Icon size={14} />
-              <span className={statusB.class} style={{ fontSize: '13px', fontWeight: 500 }}>{statusB.label}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Overlap Indicator */}
         <div
           style={{
-            marginTop: '16px',
-            padding: '12px',
-            borderRadius: 'var(--radius-sm)',
-            background: isOverlap ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
-            border: `1px solid ${isOverlap ? 'var(--accent)' : 'rgba(239, 68, 68, 0.3)'}`,
             display: 'flex',
             alignItems: 'center',
-            gap: '10px',
-            fontSize: '13px'
+            gap: '7px',
+            fontSize: 'var(--text-label-size)',
+            color: overlapNow ? 'var(--accent)' : 'var(--text-muted)',
           }}
         >
-          {isOverlap ? (
-            <>
-              <Sun size={18} color="var(--accent)" />
-              <div>
-                <strong style={{ color: 'white' }}>Overlap now</strong> — both are awake and free. Good time for a shared activity.
-              </div>
-            </>
+          <span className="status-dot" style={{ background: overlapNow ? 'var(--accent)' : 'var(--text-muted)' }} />
+          {overlapNow ? (
+            <span>
+              Both awake right now — a good moment for something shared.
+            </span>
           ) : (
-            <>
-              <Moon size={18} color="#f87171" />
-              <div>
-                <strong style={{ color: '#f87171' }}>No overlap right now</strong> — one of you is sleeping or working. Leave an asynchronous message.
-              </div>
-            </>
+            <span>
+              One of you is asleep. Leave a message they'll get in their morning.
+            </span>
           )}
         </div>
       </div>

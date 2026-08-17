@@ -147,7 +147,7 @@ export class LocalConnection implements Connection {
         break;
       }
       case 'cinema':
-        this.sync.sendCinema((payload as CinemaPayload).playing);
+        this.sync.sendCinema((payload as CinemaPayload).playing, (payload as CinemaPayload).position);
         break;
       case 'timer':
         this.sync.sendTimer(payload as TimerPayload);
@@ -213,7 +213,12 @@ export class LocalConnection implements Connection {
         );
         break;
       case 'cinema':
-        this.emit(makeEnvelope({ event: CINEMA_EVENT, payload: { playing: msg.playing } }));
+        this.emit(
+          makeEnvelope({
+            event: CINEMA_EVENT,
+            payload: { playing: msg.playing, position: msg.position },
+          }),
+        );
         break;
       case 'timer':
         this.emit(makeEnvelope({ event: 'timer', payload: msg.payload }));
@@ -283,6 +288,7 @@ export class RemoteConnection implements Connection {
     this.client = new RealtimeClient(
       session.sessionId,
       session.peerId,
+      session.token ?? '',
       session.lastAppliedEventSeq ?? 0,
     );
 
@@ -308,6 +314,10 @@ export class RemoteConnection implements Connection {
   }
 
   start(): void {
+    // A re-started connection is live again. stop() silences it for the
+    // leave/swap path; starting it again (e.g. React StrictMode's dev
+    // mount → cleanup → mount) must not leave it permanently deaf.
+    this.stopped = false;
     this.client.connect();
   }
 

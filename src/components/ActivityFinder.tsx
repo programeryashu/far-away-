@@ -1,5 +1,17 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Video, Paintbrush, Coffee, CloudRain, Play, Pause, RotateCcw, X, Users } from 'lucide-react';
+import {
+  Video,
+  Paintbrush,
+  Coffee,
+  Play,
+  Pause,
+  RotateCcw,
+  X,
+  Users,
+  Volume2,
+  VolumeX,
+  MessageCircle
+} from 'lucide-react';
 import type { TimerPayload } from '../lib/broadcast';
 import type { Connection } from '../lib/connection';
 import { parseCanvasStrokes, parseCinemaState, parseTimerState } from '../lib/reconcile';
@@ -46,8 +58,15 @@ interface Stroke {
 }
 
 const FOCUS_SECONDS = 25 * 60;
-const USER_COLOR = 'rgba(99, 102, 241, 0.8)';
-const PARTNER_COLOR = 'rgba(236, 72, 153, 0.8)';
+const USER_COLOR = 'rgba(217, 164, 65, 0.8)';
+const PARTNER_COLOR = 'rgba(224, 123, 180, 0.8)';
+
+/**
+ * The shared watch's media: a short public-domain NASA clip (aurora over
+ * Earth from the ISS), bundled with the app so the demo works offline and
+ * nothing copyrighted is streamed.
+ */
+const CINEMA_VIDEO_SRC = '/cinema/aurora.mp4';
 
 const formatTime = (totalSeconds: number) => {
   const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
@@ -79,6 +98,33 @@ const sampleBezier = (p0: Point, p1: Point, p2: Point, p3: Point, steps = 24): P
     });
   }
   return points;
+};
+
+/**
+ * Shared modal keyboard behavior: Escape closes, Tab stays inside the panel
+ * (the overlay is the whole world while a dialog is open).
+ */
+const handleModalKeys = (e: React.KeyboardEvent<HTMLDivElement>, close: () => void) => {
+  if (e.key === 'Escape') {
+    close();
+    return;
+  }
+  if (e.key !== 'Tab') return;
+  const panel = e.currentTarget.querySelector<HTMLElement>('.modal-panel');
+  if (!panel) return;
+  const focusables = Array.from(
+    panel.querySelectorAll<HTMLElement>('button, input, select, textarea, [href]')
+  ).filter((el) => !(el as HTMLButtonElement | HTMLInputElement).disabled);
+  if (focusables.length === 0) return;
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
 };
 
 // Build the partner heart as two strokes so it replays correctly after resize
@@ -117,10 +163,26 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
     liveRef.current = { peerName, peerColor };
   }, [peerName, peerColor]);
 
-  // SynchroCinema State
+  // ------------------------------------
+  // Cinema — a real shared <video>
+  // ------------------------------------
+  // The shared state is { playing, position }: every action (play, pause,
+  // seek) sends both, and the peer applies both, so two devices stay on the
+  // same playback point. `cinemaStateRef` is the last known shared state —
+  // it restores the video when the modal reopens and survives snapshots.
+  const cinemaStateRef = useRef<{ playing: boolean; position: number; at: number }>({
+    playing: false,
+    position: 0,
+    at: 0,
+  });
   const [isPlaying, setIsPlaying] = useState(false);
+  const [videoTime, setVideoTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [videoMuted, setVideoMuted] = useState(true);
   const [syncStatus, setSyncStatus] = useState('Synced');
   const [cinemaLogs, setCinemaLogs] = useState<string[]>(['Session initialized']);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const cinemaTimerRef = useRef<number | null>(null);
 
   // Deep Space Coffee Timer State
   const [secondsLeft, setSecondsLeft] = useState(FOCUS_SECONDS);
@@ -136,7 +198,6 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
   const strokesRef = useRef<Stroke[]>([]);
   const currentStrokeRef = useRef<Stroke | null>(null);
   const partnerDrawTimerRef = useRef<number | null>(null);
-  const cinemaTimerRef = useRef<number | null>(null);
 
   // Pomodoro countdown anchored to the wall clock, so background-tab throttling
   // of setInterval can't make the shared timer drift. Uses new Date().getTime()
@@ -189,37 +250,81 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
   };
 
   // ------------------------------------
-  // Cinema Simulation logic
+  // Cinema playback sync logic
   // ------------------------------------
-  // Single play/pause path: the toggle flips, Start Together forces play.
-  const applyCinemaPlaying = useCallback((playing: boolean) => {
-    setIsPlaying(playing);
-    setSyncStatus('Syncing…');
+  // jsdom has no media playback; play()/pause() must never throw in tests.
+  const safeVideoPlay = useCallback((video: HTMLVideoElement) => {
+    try {
+      const p = video.play() as unknown as Promise<void> | undefined;
+      if (p && typeof p.catch === 'function') p.catch(() => { /* autoplay blocked */ });
+    } catch {
+      // media playback not implemented — ignore
+    }
+  }, []);
 
-    // Add user action log
-    const userLog = `${ownName} ${playing ? 'pressed PLAY' : 'pressed PAUSE'}`;
-    setCinemaLogs(prev => [userLog, ...prev]);
-
-    // A real peer mirrors the toggle over the active transport.
-    connection.send(CINEMA_EVENT, { playing } satisfies CinemaPayload);
-
-    cinemaTimerRef.current = window.setTimeout(() => {
-      setSyncStatus('Synced');
-      if (!hasPeer) {
-        const partnerLog = `${peerName} synced to playback at 02:45`;
-        setCinemaLogs(prev => [partnerLog, ...prev]);
+  // Apply a shared playback state to the local video (when mounted) and
+  // remember it so a reopened modal resumes from the same point. `at` is when
+  // this state was true, so a restore can advance a still-playing position by
+  // the wall-clock time elapsed since (the same anchoring as the snapshot).
+  const applyCinemaState = useCallback(
+    (playing: boolean, position: number) => {
+      cinemaStateRef.current = { playing, position, at: Date.now() };
+      setIsPlaying(playing);
+      const video = videoRef.current;
+      if (video) {
+        // The clip loops, so a wall-clock-extrapolated position wraps into the
+        // duration instead of dead-ending at the last frame.
+        const target =
+          videoDuration > 0 ? position % videoDuration : position;
+        try {
+          video.currentTime = Math.max(0, target);
+        } catch {
+          // setting currentTime before metadata is inert — safe to skip
+        }
+        if (playing) safeVideoPlay(video);
+        else video.pause?.();
       }
-    }, 1000);
-  }, [ownName, connection, hasPeer, peerName]);
+    },
+    [safeVideoPlay, videoDuration],
+  );
+
+  // Single outbound path: the toggle (and Start Together's forced play) both
+  // land here. Position always travels with the play state so the peer
+  // re-anchors to the exact playback point.
+  const sendCinemaAction = useCallback(
+    (playing: boolean, position: number, log: string) => {
+      applyCinemaState(playing, position);
+      setSyncStatus('Syncing…');
+      setCinemaLogs(prev => [log, ...prev]);
+      connection.send(CINEMA_EVENT, { playing, position } satisfies CinemaPayload);
+      if (cinemaTimerRef.current !== null) window.clearTimeout(cinemaTimerRef.current);
+      cinemaTimerRef.current = window.setTimeout(() => setSyncStatus('Synced'), 1000);
+    },
+    [applyCinemaState, connection],
+  );
 
   const handleCinemaToggle = () => {
-    applyCinemaPlaying(!isPlaying);
+    const video = videoRef.current;
+    const position = video ? video.currentTime : cinemaStateRef.current.position;
+    sendCinemaAction(
+      !isPlaying,
+      position,
+      `${ownName} ${!isPlaying ? 'pressed PLAY' : 'pressed PAUSE'} at ${formatTime(position)}`,
+    );
+  };
+
+  const handleCinemaSeek = (value: number) => {
+    sendCinemaAction(
+      isPlaying,
+      value,
+      `${ownName} seeked to ${formatTime(value)}`,
+    );
   };
 
   // ------------------------------------
-  // Canvas Drawing logic (DPR-aware)
+  // Canvas drawing logic (DPR-aware, pointer events for touch/pen/mouse)
   // ------------------------------------
-  const getCanvasPoint = (e: React.MouseEvent<HTMLCanvasElement>): Point | null => {
+  const getCanvasPoint = (e: React.PointerEvent<HTMLCanvasElement>): Point | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
@@ -281,10 +386,22 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
       } else if (env.event === 'timer') {
         applyTimer(env.payload);
       } else if (env.event === CINEMA_EVENT) {
-        setIsPlaying(env.payload.playing);
+        const { playing, position } = env.payload;
+        // The server echoes cinema events to the sender too (so the sender's
+        // event-seq floor advances). Our own echo — or any action that would
+        // not change the current state — is a no-op, never a re-anchor or a
+        // log line; a real peer action differs in play state or position.
+        const currentPos = videoRef.current
+          ? videoRef.current.currentTime
+          : cinemaStateRef.current.position;
+        if (playing === isPlaying && Math.abs(position - currentPos) < 2) {
+          setSyncStatus('Synced');
+          return;
+        }
+        applyCinemaState(playing, position);
         setSyncStatus('Synced');
         setCinemaLogs((prev) => [
-          `${peerName} ${env.payload.playing ? 'pressed PLAY' : 'pressed PAUSE'}`,
+          `${peerName} ${playing ? 'pressed PLAY' : 'pressed PAUSE'} at ${formatTime(position)}`,
           ...prev
         ]);
       } else if (env.event === 'state') {
@@ -297,17 +414,17 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
         }
         const timer = parseTimerState(env.payload.timer);
         if (timer) applyTimer(timer);
-        // Inherit an already-running shared watch: the snapshot is the only
-        // way an afterSeq=0 joiner learns the cinema state (the event itself
-        // is never replayed to it). No log line — no peer action happened.
+        // Inherit the shared watch's live playback point: the snapshot is the
+        // only way an afterSeq=0 joiner learns the cinema state (the event
+        // itself is never replayed to it). No log line — no peer action happened.
         const cinema = parseCinemaState(env.payload.cinema);
         if (cinema) {
-          setIsPlaying(cinema.playing);
+          applyCinemaState(cinema.playing, cinema.position);
           setSyncStatus('Synced');
         }
       }
     });
-  }, [connection, redrawAll, applyTimer, peerName]);
+  }, [connection, redrawAll, applyTimer, applyCinemaState, peerName, isPlaying]);
 
   // One place that turns a launch into activity state. Stable so the launch
   // effect below only depends on the request itself.
@@ -317,13 +434,16 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
         startTimerWithSeconds((launch.durationMin ?? 45) * 60);
         setActiveModal('cafe');
       } else if (launch.type === 'cinema') {
-        applyCinemaPlaying(true);
+        // Start Together on a shared watch: play from wherever the video is.
+        const video = videoRef.current;
+        const position = video ? video.currentTime : cinemaStateRef.current.position;
+        sendCinemaAction(true, position, `${ownName} started the shared watch`);
         setActiveModal('cinema');
       } else if (launch.type === 'canvas') {
         setActiveModal('canvas');
       }
     },
-    [startTimerWithSeconds, applyCinemaPlaying]
+    [startTimerWithSeconds, sendCinemaAction, ownName]
   );
 
   // Start Together: a launch command (from Shared Moment) opens the matching
@@ -349,13 +469,23 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
     return () => observer.disconnect();
   }, [activeModal, redrawAll]);
 
-  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const startDrawing = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const point = getCanvasPoint(e);
     if (!point) return;
+
+    // Pointer capture keeps the stroke alive even when the pointer leaves the
+    // canvas mid-drag; touch-action:none (on the style below) stops the page
+    // from scrolling instead of drawing on phones.
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      // Unsupported pointer id (or jsdom) — drawing still works while the
+      // pointer stays on the canvas.
+    }
 
     currentStrokeRef.current = { points: [point], color: myColor };
     ctx.beginPath();
@@ -366,7 +496,7 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
     setIsDrawing(true);
   };
 
-  const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const draw = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isDrawing) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -383,9 +513,14 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
     ctx.stroke();
   };
 
-  const stopDrawing = () => {
+  const stopDrawing = (e?: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isDrawing) return;
     setIsDrawing(false);
+    // The final pointer position (up/cancel) closes the stroke when present.
+    if (e) {
+      const point = getCanvasPoint(e);
+      if (point && currentStrokeRef.current) currentStrokeRef.current.points.push(point);
+    }
     const stroke = currentStrokeRef.current;
     currentStrokeRef.current = null;
     if (stroke && stroke.points.length > 0) {
@@ -395,13 +530,18 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
     }
 
     // Simulated partner drawing is the offline fallback for local solo mode
-    // only — a real peer draws back over the active transport.
+    // only — a real peer draws back over the active transport. The heart is
+    // drawn relative to the actual canvas size, never fixed coordinates.
     if (!hasPeer && connection.mode === 'local' && canvasLogs.length === 0) {
       setPartnerDrawing(true);
       setCanvasLogs(prev => [`${nameB || 'User B'} is drawing…`, ...prev]);
 
       partnerDrawTimerRef.current = window.setTimeout(() => {
-        strokesRef.current = [...strokesRef.current, ...buildHeartStrokes(250, 100)];
+        const canvas = canvasRef.current;
+        const rect = canvas?.getBoundingClientRect();
+        const cx = rect ? rect.width / 2 : 250;
+        const cy = rect ? rect.height / 2 : 100;
+        strokesRef.current = [...strokesRef.current, ...buildHeartStrokes(cx, cy)];
         redrawAll();
         setPartnerDrawing(false);
         setCanvasLogs(prev => [`${nameB || 'User B'} drew a heart`, ...prev]);
@@ -416,73 +556,80 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
     connection.send('canvas-clear', {});
   };
 
-  // Activity list
+  // Modal lifecycle — Escape and the close button share one path. Closing the
+  // cinema modal is local only: the shared watch keeps its state (the peer
+  // keeps watching), and reopening resumes from the last shared position.
+  const closeCinema = () => {
+    if (cinemaTimerRef.current !== null) window.clearTimeout(cinemaTimerRef.current);
+    setActiveModal(null);
+  };
+  const closeCanvas = () => {
+    if (partnerDrawTimerRef.current !== null) window.clearTimeout(partnerDrawTimerRef.current);
+    setActiveModal(null);
+  };
+  const closeCafe = () => setActiveModal(null);
+
+  // Activity list — one quiet strip of verbs. The open activity (its modal)
+  // carries the product names and the visual focus, not a card state.
+  // One quiet strip of verbs. The full product names live on the open
+  // activity's modal and in the aria-labels; the row itself stays calm.
   const activities: Activity[] = [
     {
       id: 'cinema',
       title: 'SynchroCinema',
-      desc: 'Watch together with synchronized playback and shared reaction logs.',
-      icon: <Video size={18} color="var(--text-secondary)" />
+      desc: 'Watch',
+      icon: <Video size={16} color="var(--text-secondary)" />
     },
     {
       id: 'canvas',
       title: 'Galactic Canvas',
-      desc: 'A shared whiteboard — sketch together and see strokes arrive live.',
-      icon: <Paintbrush size={18} color="var(--text-secondary)" />
+      desc: 'Draw',
+      icon: <Paintbrush size={16} color="var(--text-secondary)" />
     },
     {
       id: 'cafe',
       title: 'Deep Space Coffee',
-      desc: 'Ambient soundscape mixed with a shared focus timer.',
-      icon: <Coffee size={18} color="var(--text-secondary)" />
+      desc: 'Focus',
+      icon: <Coffee size={16} color="var(--text-secondary)" />
+    },
+    {
+      id: 'chat',
+      title: 'Conversation',
+      desc: 'Talk',
+      icon: <MessageCircle size={16} color="var(--text-secondary)" />
     }
   ];
 
-  return (
-    <div id="activity-center" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      <h2 style={{ fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-        Shared Activities
-      </h2>
-      <p style={{ fontSize: '14px' }}>
-        Cinema, canvas, and a shared focus timer — synced between you.
-      </p>
+  const openActivity = (id: string) => {
+    if (id === 'chat') {
+      document.getElementById('chat-box')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    setActiveModal(id);
+  };
 
-      {/* Activities Grid */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '10px' }}>
+  return (
+    <div id="activity-center" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      <div className="flex-between" style={{ gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+        <h2 className="section-title">Shared Activities</h2>
+        <span style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-muted)' }}>
+          synced between you
+        </span>
+      </div>
+
+      <div className="activity-strip" aria-label="Shared activities">
         {activities.map((act) => (
-          <div
+          <button
             key={act.id}
-            style={{
-              padding: '16px',
-              borderRadius: 'var(--radius-md)',
-              background: 'rgba(255, 255, 255, 0.02)',
-              border: '1px solid var(--border-glass)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '10px',
-              transition: 'var(--transition-smooth)'
-            }}
+            onClick={() => openActivity(act.id)}
+            className="activity-action"
+            aria-label={`Open ${act.title}`}
+            title={act.title}
+            aria-pressed={activeModal === act.id}
           >
-            <div className="flex-between">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                {act.icon}
-                <h4 style={{ fontSize: '15px' }}>{act.title}</h4>
-              </div>
-            </div>
-            <p style={{ fontSize: '13px' }}>{act.desc}</p>
-            <button
-              onClick={() => setActiveModal(act.id)}
-              className="btn btn-outline"
-              style={{
-                width: '100%',
-                padding: '8px 16px',
-                fontSize: '13px',
-                marginTop: '4px'
-              }}
-            >
-              Initialize Session
-            </button>
-          </div>
+            {act.icon}
+            <span>{act.desc}</span>
+          </button>
         ))}
       </div>
 
@@ -490,134 +637,115 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
       {/* SynchroCinema Modal */}
       {/* ---------------------------------------------------- */}
       {activeModal === 'cinema' && (
-        <div className="modal-overlay">
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="SynchroCinema"
+          onKeyDown={(e) => handleModalKeys(e, closeCinema)}
+        >
           <div
-            className="glass-panel modal-panel"
-            style={{
-              maxWidth: '600px',
-              width: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '16px',
-              boxShadow: 'var(--shadow-pop)'
-            }}
+            className="glass-panel modal-panel modal-panel--wide"
+            style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
           >
             <div className="flex-between">
-              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Video size={20} color="var(--primary)" />
-                SynchroCinema Control Center
+              <h3 className="section-title" style={{ fontSize: 'var(--text-subheading-size)' }}>
+                <Video size={16} color="var(--text-secondary)" />
+                SynchroCinema
               </h3>
-              <button
-                onClick={() => {
-                  if (cinemaTimerRef.current !== null) window.clearTimeout(cinemaTimerRef.current);
-                  setActiveModal(null);
-                  setIsPlaying(false);
-                }}
-                className="modal-close"
-                aria-label="Close SynchroCinema"
-              >
+              <button onClick={closeCinema} className="modal-close" aria-label="Close SynchroCinema">
                 <X size={18} />
               </button>
             </div>
 
-            {/* Video Player Mockup */}
-            <div
-              style={{
-                width: '100%',
-                height: '240px',
-                background: '#04060f',
-                borderRadius: 'var(--radius-md)',
-                border: '1px solid var(--border-glass)',
-                position: 'relative',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'center',
-                alignItems: 'center',
-                overflow: 'hidden'
-              }}
-            >
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  height: '100%',
-                  backgroundImage: 'linear-gradient(to bottom, #111827, #030712)',
-                  zIndex: 0
+            <div className="cinema-frame">
+              <video
+                ref={videoRef}
+                src={CINEMA_VIDEO_SRC}
+                loop
+                playsInline
+                muted={videoMuted}
+                preload="auto"
+                aria-label="Shared video"
+                onLoadedMetadata={() => {
+                  const video = videoRef.current;
+                  if (!video) return;
+                  if (Number.isFinite(video.duration) && video.duration > 0) {
+                    setVideoDuration(video.duration);
+                  }
+                  // Resume from the last shared position, advanced by the
+                  // wall-clock time elapsed since that state was true.
+                  const { playing, position, at } = cinemaStateRef.current;
+                  const elapsed = (Date.now() - at) / 1000;
+                  try {
+                    video.currentTime = Math.max(0, position + (playing ? elapsed : 0));
+                  } catch {
+                    // setting currentTime before metadata is inert — safe to skip
+                  }
                 }}
-              ></div>
-
-              <div style={{ zIndex: 2, textAlign: 'center' }}>
-                <span style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>
-                  Now streaming
-                </span>
-                <h4 style={{ fontSize: '18px', marginBottom: '16px' }}>Exploring the Far Reaches (Trailer)</h4>
-
-                <button
-                  onClick={handleCinemaToggle}
-                  className="btn btn-primary"
-                  style={{
-                    borderRadius: '50%',
-                    width: '60px',
-                    height: '60px',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: 0
-                  }}
-                  aria-label={isPlaying ? 'Pause playback' : 'Play playback'}
-                >
-                  {isPlaying ? <Pause size={24} /> : <Play size={24} style={{ marginLeft: '4px' }} />}
-                </button>
-              </div>
-
-              {/* Player bar */}
-              <div
-                style={{
-                  position: 'absolute',
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  padding: '12px',
-                  background: 'rgba(0,0,0,0.6)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  zIndex: 2
+                onDurationChange={() => {
+                  const video = videoRef.current;
+                  if (video && Number.isFinite(video.duration) && video.duration > 0) {
+                    setVideoDuration(video.duration);
+                  }
                 }}
-              >
-                <span style={{ fontSize: '11px', fontFamily: 'monospace' }}>02:45 / 03:00</span>
-                <span style={{ fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <Users size={12} /> Sync: <span style={{ color: 'var(--accent)' }}>{syncStatus}</span>
-                </span>
-              </div>
+                onTimeUpdate={() => {
+                  const video = videoRef.current;
+                  if (video) setVideoTime(video.currentTime);
+                }}
+              />
             </div>
 
-            {/* Sync logs */}
-            <div>
-              <label>Connection Activity Logs</label>
-              <div
-                style={{
-                  background: 'rgba(0,0,0,0.3)',
-                  border: '1px solid var(--border-glass)',
-                  borderRadius: 'var(--radius-sm)',
-                  height: '100px',
-                  overflowY: 'auto',
-                  padding: '10px',
-                  fontFamily: 'monospace',
-                  fontSize: '12px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '4px'
-                }}
+            <div className="cinema-controls">
+              <button
+                onClick={handleCinemaToggle}
+                className="btn btn-primary"
+                aria-label={isPlaying ? 'Pause playback' : 'Play playback'}
+                style={{ padding: '9px 18px' }}
               >
-                {cinemaLogs.map((log, idx) => (
-                  <div key={idx} style={{ color: idx === 0 ? 'var(--accent)' : 'var(--text-muted)' }}>
-                    &gt; {log}
-                  </div>
-                ))}
-              </div>
+                {isPlaying ? <Pause size={15} /> : <Play size={15} />}
+                {isPlaying ? 'Pause' : 'Play'}
+              </button>
+              <input
+                className="cinema-seek"
+                type="range"
+                aria-label="Seek video"
+                min={0}
+                // Generous ceiling until metadata loads; the real duration
+                // replaces it on loadedmetadata (a 0 max would pin the thumb).
+                max={videoDuration || 600}
+                step={0.1}
+                value={videoTime}
+                onChange={(e) => handleCinemaSeek(Number(e.target.value))}
+              />
+              <span className="cinema-time">
+                {formatTime(videoTime)} / {formatTime(videoDuration)}
+              </span>
+              <button
+                onClick={() => setVideoMuted((muted) => !muted)}
+                className="btn btn-outline"
+                aria-label={videoMuted ? 'Unmute' : 'Mute'}
+                aria-pressed={!videoMuted}
+                style={{ padding: '9px 12px' }}
+              >
+                {videoMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+              </button>
+            </div>
+
+            <div className="flex-between">
+              <span className={syncStatus === 'Synced' ? 'cinema-sync is-synced' : 'cinema-sync'}>
+                <Users size={13} />
+                {syncStatus}
+              </span>
+              <span className="meta">one playback point on both screens</span>
+            </div>
+
+            <div className="group activity-log">
+              {cinemaLogs.map((log, idx) => (
+                <div key={idx} className={idx === 0 ? 'log-line log-line--latest' : 'log-line'}>
+                  {log}
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -627,106 +755,58 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
       {/* Galactic Canvas Modal */}
       {/* ---------------------------------------------------- */}
       {activeModal === 'canvas' && (
-        <div className="modal-overlay">
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Galactic Canvas"
+          onKeyDown={(e) => handleModalKeys(e, closeCanvas)}
+        >
           <div
             className="glass-panel modal-panel"
-            style={{
-              maxWidth: '540px',
-              width: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '16px',
-              boxShadow: 'var(--shadow-pop)'
-            }}
+            style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
           >
             <div className="flex-between">
-              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Paintbrush size={20} color="var(--secondary)" />
-                Galactic Canvas Collaboration
+              <h3 className="section-title" style={{ fontSize: 'var(--text-subheading-size)' }}>
+                <Paintbrush size={16} color="var(--text-secondary)" />
+                Galactic Canvas
               </h3>
-              <button
-                onClick={() => {
-                  if (partnerDrawTimerRef.current !== null) window.clearTimeout(partnerDrawTimerRef.current);
-                  setActiveModal(null);
-                }}
-                className="modal-close"
-                aria-label="Close Galactic Canvas"
-              >
+              <button onClick={closeCanvas} className="modal-close" aria-label="Close Galactic Canvas">
                 <X size={18} />
               </button>
             </div>
 
-            {/* Drawing Board */}
-            <div style={{ position: 'relative' }}>
+            <div className="canvas-wrap">
               <canvas
                 ref={canvasRef}
-                onMouseDown={startDrawing}
-                onMouseMove={draw}
-                onMouseUp={stopDrawing}
-                onMouseLeave={stopDrawing}
-                style={{
-                  background: '#04060f',
-                  border: '1px solid var(--border-glass)',
-                  borderRadius: 'var(--radius-md)',
-                  width: '100%',
-                  height: '260px',
-                  cursor: 'crosshair',
-                  display: 'block'
-                }}
+                onPointerDown={startDrawing}
+                onPointerMove={draw}
+                onPointerUp={stopDrawing}
+                onPointerCancel={stopDrawing}
+                aria-label="Shared drawing canvas"
+                style={{ touchAction: 'none' }}
               />
-
               {partnerDrawing && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: '12px',
-                    left: '12px',
-                    background: 'rgba(224,123,180,0.92)',
-                    padding: '4px 10px',
-                    borderRadius: '4px',
-                    fontSize: '11px',
-                    color: 'white',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px'
-                  }}
-                >
-                  <Users size={10} /> {nameB || 'Partner'} is drawing…
-                </div>
+                <span className="canvas-partner">{nameB || 'Partner'} is drawing…</span>
               )}
             </div>
 
-            {/* Controls */}
             <div className="flex-between">
-              <button onClick={clearCanvas} className="btn btn-outline" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <RotateCcw size={14} /> Clear Canvas
+              <button onClick={clearCanvas} className="btn btn-outline" style={{ padding: '8px 14px' }}>
+                <RotateCcw size={14} /> Clear
               </button>
-              <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                Draw — strokes sync live.
-              </div>
+              <span className="meta">strokes sync live</span>
             </div>
 
-            {/* Action Log */}
-            <div
-              style={{
-                background: 'rgba(0,0,0,0.3)',
-                border: '1px solid var(--border-glass)',
-                borderRadius: 'var(--radius-sm)',
-                height: '60px',
-                overflowY: 'auto',
-                padding: '8px 12px',
-                fontFamily: 'monospace',
-                fontSize: '12px'
-              }}
-            >
+            <div className="group activity-log">
               {canvasLogs.length > 0 ? (
                 canvasLogs.map((log, idx) => (
-                  <div key={idx} style={{ color: 'var(--text-secondary)' }}>
-                    &gt; {log}
+                  <div key={idx} className={idx === 0 ? 'log-line log-line--latest' : 'log-line'}>
+                    {log}
                   </div>
                 ))
               ) : (
-                <span style={{ color: 'var(--text-muted)' }}>&gt; Awaiting initial brush stroke...</span>
+                <div className="log-line log-line--empty">Awaiting the first stroke…</div>
               )}
             </div>
           </div>
@@ -737,134 +817,52 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
       {/* Deep Space Coffee Modal */}
       {/* ---------------------------------------------------- */}
       {activeModal === 'cafe' && (
-        <div className="modal-overlay">
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Deep Space Coffee"
+          onKeyDown={(e) => handleModalKeys(e, closeCafe)}
+        >
           <div
             className="glass-panel modal-panel"
-            style={{
-              maxWidth: '440px',
-              width: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '16px',
-              boxShadow: 'var(--shadow-pop)'
-            }}
+            style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
           >
             <div className="flex-between">
-              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Coffee size={20} color="var(--accent)" />
-                Deep Space Cafe & Focus Timer
+              <h3 className="section-title" style={{ fontSize: 'var(--text-subheading-size)' }}>
+                <Coffee size={16} color="var(--text-secondary)" />
+                Deep Space Coffee
               </h3>
-              <button
-                onClick={() => setActiveModal(null)}
-                className="modal-close"
-                aria-label="Close Deep Space Coffee"
-              >
+              <button onClick={closeCafe} className="modal-close" aria-label="Close Deep Space Coffee">
                 <X size={18} />
               </button>
             </div>
 
-            <div style={{ textAlign: 'center', padding: '20px 0' }}>
-              <div style={{ fontSize: '44px', fontWeight: 650, fontFamily: 'monospace', letterSpacing: '0.02em' }}>
-                {formatTime(secondsLeft)}
-              </div>
-              <span style={{ fontSize: '13px', color: 'var(--text-muted)', display: 'block', marginTop: '6px' }}>
-                Shared focus session
-              </span>
+            <div className="timer-face">
+              <div className="timer-count">{formatTime(secondsLeft)}</div>
+              <span className="meta">a shared focus session</span>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <label>Soundscape</label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '9px 12px',
-                    borderRadius: 'var(--radius-sm)',
-                    border: '1px solid var(--border-glass)',
-                    fontSize: '13px'
-                  }}
-                >
-                  <Coffee size={14} color="var(--accent)" />
-                  <span>Cosmic Cafe</span>
-                  <span style={{ marginLeft: 'auto', color: 'var(--accent)', fontSize: '12px' }}>Active</span>
-                </div>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '9px 12px',
-                    borderRadius: 'var(--radius-sm)',
-                    border: '1px solid var(--border-glass)',
-                    fontSize: '13px',
-                    color: 'var(--text-muted)'
-                  }}
-                >
-                  <CloudRain size={14} />
-                  <span>Solar Rain</span>
-                  <span style={{ marginLeft: 'auto', fontSize: '12px' }}>Off</span>
-                </div>
+            {sessionLogs.length > 0 && (
+              <div className="group activity-log">
+                {sessionLogs.map((log, idx) => (
+                  <div key={idx} className={idx === 0 ? 'log-line log-line--latest' : 'log-line'}>
+                    {log}
+                  </div>
+                ))}
               </div>
-            </div>
+            )}
 
-            {/* Timer controls */}
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button
-                onClick={handleStartTimer}
-                disabled={isRunning}
-                className="btn btn-primary"
-                style={{ flex: 1, padding: '10px 16px', fontSize: '13px' }}
-              >
+            <div className="timer-controls">
+              <button onClick={handleStartTimer} disabled={isRunning} className="btn btn-primary">
                 <Play size={14} /> Start
               </button>
-              <button
-                onClick={handlePauseTimer}
-                disabled={!isRunning}
-                className="btn btn-outline"
-                style={{ flex: 1, padding: '10px 16px', fontSize: '13px' }}
-              >
+              <button onClick={handlePauseTimer} disabled={!isRunning} className="btn btn-outline">
                 <Pause size={14} /> Pause
               </button>
-              <button
-                onClick={handleResetTimer}
-                className="btn btn-outline"
-                style={{ flex: 1, padding: '10px 16px', fontSize: '13px' }}
-              >
+              <button onClick={handleResetTimer} className="btn btn-outline">
                 <RotateCcw size={14} /> Reset
               </button>
-            </div>
-
-            {/* Session log */}
-            <div>
-              <label>Session Log</label>
-              <div
-                style={{
-                  background: 'rgba(0,0,0,0.3)',
-                  border: '1px solid var(--border-glass)',
-                  borderRadius: 'var(--radius-sm)',
-                  minHeight: '48px',
-                  maxHeight: '96px',
-                  overflowY: 'auto',
-                  padding: '8px 12px',
-                  fontFamily: 'monospace',
-                  fontSize: '12px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '4px'
-                }}
-              >
-                {sessionLogs.length > 0 ? (
-                  sessionLogs.map((log, idx) => (
-                    <div key={idx} style={{ color: idx === 0 ? 'var(--accent)' : 'var(--text-muted)' }}>
-                      &gt; {log}
-                    </div>
-                  ))
-                ) : (
-                  <span style={{ color: 'var(--text-muted)' }}>&gt; No sessions completed yet.</span>
-                )}
-              </div>
             </div>
           </div>
         </div>

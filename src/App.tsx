@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { LocationSelector } from './components/LocationSelector';
-import { DistanceVisualizer } from './components/DistanceVisualizer';
 import { TimezoneSync } from './components/TimezoneSync';
 import { LiveWindow } from './components/LiveWindow';
 import { PingMeter } from './components/PingMeter';
@@ -107,6 +106,9 @@ function App() {
   const [selectedCityB, setSelectedCityB] = useState<CityData>(initial.b.city);
   const [copied, setCopied] = useState(false);
   const [manualCopyUrl, setManualCopyUrl] = useState<string | null>(null);
+  // First-run hero: inline "Join with code" form state.
+  const [heroJoinOpen, setHeroJoinOpen] = useState(false);
+  const [heroCode, setHeroCode] = useState('');
   const copyTimerRef = useRef<number | null>(null);
   // Shared Moment → activity launch (Start Together). Consumed once by
   // ActivityFinder; chat launches scroll to the conversation instead.
@@ -375,7 +377,13 @@ function App() {
         setSessionState('joining');
         const { id, code } = await createSession();
         const res = await joinSession(id, userNameA || 'User A', selectedCityA);
-        const newSession: ClientSession = { sessionId: id, peerId: res.peerId, role: res.role, code };
+        const newSession: ClientSession = {
+          sessionId: id,
+          peerId: res.peerId,
+          role: res.role,
+          token: res.token,
+          code
+        };
         persistSession(newSession);
         setMyRole(newSession.role);
         setSession(newSession);
@@ -404,6 +412,15 @@ function App() {
     }
   };
 
+  // Hero "Join with code": navigate to the code invite — the existing join
+  // flow (detect param → joining state → join endpoint) takes over from there.
+  const handleHeroJoin = (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = heroCode.trim();
+    if (!code) return;
+    window.location.href = `${window.location.pathname}?code=${encodeURIComponent(code)}`;
+  };
+
   // Invitee join: User B opens ?session=<id> or ?code=<code>, enters identity,
   // joins, connects. Joining via code returns the session id so the persisted
   // session and reconnect use the UUID internally.
@@ -419,6 +436,7 @@ function App() {
         sessionId,
         peerId: res.peerId,
         role: res.role,
+        token: res.token,
         code: urlCode ?? undefined
       };
       persistSession(newSession);
@@ -454,7 +472,7 @@ function App() {
   const handleLeave = async () => {
     if (session) {
       try {
-        await leaveSession(session.sessionId, session.peerId);
+        await leaveSession(session.sessionId, session.peerId, session.token);
       } catch {
         // Best effort — local cleanup proceeds regardless.
       }
@@ -481,12 +499,14 @@ function App() {
     if (urlSessionId) window.history.replaceState(null, '', window.location.pathname);
   };
 
+  // Calm, human status vocabulary. The transport may be a WebSocket —
+  // the user only ever needs to know what it means for the two of them.
   const sessionStatusLabel: Record<SessionState, string> = {
-    local: 'Local mode',
+    local: 'Local',
     joining: 'Joining…',
-    connected: hasRemotePeer ? 'Connected · peer online' : 'Connected · waiting for peer',
+    connected: hasRemotePeer ? 'Connected · your person is online' : 'Connected · waiting for your person',
     reconnecting: 'Reconnecting…',
-    disconnected: 'Disconnected',
+    disconnected: 'Connection lost',
     error: 'Session unavailable'
   };
 
@@ -505,22 +525,10 @@ function App() {
         Skip to content
       </a>
       {/* Header — quiet wordmark, live status, two actions */}
-      <header style={{ borderBottom: '1px solid var(--border-glass)', background: 'rgba(11, 11, 15, 0.82)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)', padding: '14px 0', position: 'sticky', top: 0, zIndex: 50 }}>
-        <div
-          style={{
-            maxWidth: '1080px',
-            margin: '0 auto',
-            padding: '0 24px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '16px'
-          }}
-        >
+      <header className="app-header">
+        <div className="app-header-inner">
           <div style={{ display: 'flex', alignItems: 'center', gap: '20px', minWidth: 0 }}>
-            <h1 style={{ fontSize: '17px', fontWeight: 650, margin: 0, letterSpacing: '-0.02em' }}>
-              Orbit
-            </h1>
+            <h1 className="wordmark">Orbit</h1>
             <span
               className="badge"
               style={{
@@ -533,11 +541,12 @@ function App() {
               }}
               aria-live="polite"
             >
+              <span className="status-dot" style={{ background: statusColor }} />
               {sessionStatusLabel[sessionState]}
             </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
             {sessionState !== 'local' && (
               <button
                 onClick={handleLeave}
@@ -546,7 +555,7 @@ function App() {
                 aria-label="Leave the current session and return to local mode"
               >
                 <LogOut size={14} />
-                Leave
+                <span className="btn-text">Leave</span>
               </button>
             )}
             <button
@@ -556,7 +565,7 @@ function App() {
               aria-label="Copy shareable connection link"
             >
               {copied ? <Check size={14} /> : <Share2 size={14} />}
-              {copied ? 'Copied!' : 'Share Connection'}
+              <span className="btn-text">{copied ? 'Copied!' : 'Share Connection'}</span>
             </button>
           </div>
         </div>
@@ -574,6 +583,42 @@ function App() {
 
       {/* Main dashboard body */}
       <main className="app-container" id="main">
+        {/* First-run hero — the product idea in one line, two actions.
+            Only in local mode; sessions and joins show their own surfaces. */}
+        {sessionState === 'local' && (
+          <section className="hero" aria-label="Get started with Orbit">
+            <h2 className="hero-title">Two places. One moment.</h2>
+            <p className="hero-sub">
+              Distance doesn't just separate people. It gives them different moments.
+              Orbit makes those moments shared.
+            </p>
+            <div className="hero-actions">
+              <button onClick={handleShare} className="btn btn-primary">
+                Create a connection
+              </button>
+              {heroJoinOpen ? (
+                <form className="hero-join" onSubmit={handleHeroJoin}>
+                  <input
+                    autoFocus
+                    value={heroCode}
+                    onChange={(e) => setHeroCode(e.target.value)}
+                    placeholder="6-character code"
+                    aria-label="Session code"
+                    autoCapitalize="characters"
+                  />
+                  <button type="submit" className="btn btn-outline">
+                    Join
+                  </button>
+                </form>
+              ) : (
+                <button onClick={() => setHeroJoinOpen(true)} className="btn btn-outline">
+                  Join with code
+                </button>
+              )}
+            </div>
+          </section>
+        )}
+
         {/* Invitee join panel */}
         {sessionState === 'joining' &&
           (urlSessionId || urlCode) &&
@@ -583,7 +628,7 @@ function App() {
               You've been invited to a live session
             </h2>
             <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
-              Set your name and location in the <strong style={{ color: 'var(--text-primary)' }}>Remote Node (User B)</strong>{' '}
+              Set your name and location in the <strong style={{ color: 'var(--text-primary)' }}>Person B</strong>{' '}
               panel below — that is your identity in this session — then join. You will connect directly
               to the other person over the shared channel.
             </p>
@@ -613,10 +658,11 @@ function App() {
           </section>
         )}
 
-        {/* Node Location Configurations */}
-        <section className="dashboard-grid">
+        {/* Node identity — the quiet plumbing. Two people, two places;
+            editable by whoever owns each side. */}
+        <section className="dashboard-grid" aria-label="Participants">
           <LocationSelector
-            label="Host Terminal (User A)"
+            label="Person A"
             userName={userNameA}
             setUserName={setOwnNameA}
             selectedCity={selectedCityA}
@@ -626,7 +672,7 @@ function App() {
           />
 
           <LocationSelector
-            label="Remote Node (User B)"
+            label="Person B"
             userName={userNameB}
             setUserName={setOwnNameB}
             selectedCity={selectedCityB}
@@ -636,17 +682,8 @@ function App() {
           />
         </section>
 
-        {/* Distance Display Curvature */}
-        <section>
-          <DistanceVisualizer
-            cityA={selectedCityA}
-            cityB={selectedCityB}
-            nameA={userNameA}
-            nameB={userNameB}
-          />
-        </section>
-
-        {/* Our live window: shared awake-time stat + countdown + CTA */}
+        {/* Our live window: the shared-time signature — each person's
+            local time, the overlap between them, and the live countdown. */}
         <section>
           <LiveWindow
             cityA={selectedCityA}
@@ -654,6 +691,7 @@ function App() {
             nameA={userNameA}
             nameB={userNameB}
             hasPeer={hasRemotePeer}
+            role={myRole}
           />
         </section>
 
@@ -671,30 +709,6 @@ function App() {
             sessionKey={session?.sessionId ?? 'local'}
             session={session ? { sessionId: session.sessionId, peerId: session.peerId } : null}
             onLaunch={handleMomentLaunch}
-          />
-        </section>
-
-        {/* Ping the light: measured round-trip over the active transport */}
-        <section>
-          <PingMeter connection={connection} hasPeer={hasRemotePeer} />
-        </section>
-
-        {/* Time Zone Syncing & Overlaps */}
-        <section className="dashboard-grid">
-          <TimezoneSync
-            cityA={selectedCityA}
-            cityB={selectedCityB}
-            nameA={userNameA}
-            nameB={userNameB}
-          />
-
-          <ChatBox
-            cityA={selectedCityA}
-            cityB={selectedCityB}
-            nameA={userNameA}
-            nameB={userNameB}
-            connection={connection}
-            hasPeer={hasRemotePeer}
           />
         </section>
 
@@ -716,6 +730,31 @@ function App() {
             launchRequest={launchRequest}
           />
         </section>
+
+        {/* Time planning and the conversation — the two everyday tools. */}
+        <section className="dashboard-grid" aria-label="Time and conversation">
+          <TimezoneSync
+            cityA={selectedCityA}
+            cityB={selectedCityB}
+            nameA={userNameA}
+            nameB={userNameB}
+          />
+
+          <ChatBox
+            cityA={selectedCityA}
+            cityB={selectedCityB}
+            nameA={userNameA}
+            nameB={userNameB}
+            connection={connection}
+            hasPeer={hasRemotePeer}
+            myPeerId={session?.peerId ?? ''}
+          />
+        </section>
+
+        {/* The measured line — one quiet footer fact about the link itself. */}
+        <section aria-label="Connection quality">
+          <PingMeter connection={connection} hasPeer={hasRemotePeer} />
+        </section>
       </main>
 
       {/* Footer */}
@@ -730,16 +769,17 @@ function App() {
           color: 'var(--text-muted)'
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
           <span>Orbit</span>
           <span>•</span>
-          <span>Round 2 Transformation</span>
+          <span>Shared moments, even when you're far apart</span>
           <span>•</span>
           <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
             Made with <Heart size={12} color="var(--secondary)" /> for Far Away
           </span>
         </div>
       </footer>
+
     </div>
   );
 }

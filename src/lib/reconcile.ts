@@ -121,8 +121,24 @@ export function parseTimerState(timer: ServerTimer | null): TimerPayload | null 
   };
 }
 
-/** Convert the persisted cinema row into the live cinema payload a client applies. */
+/** How much wall-clock drift a snapshot inherit may extrapolate (caps bad clocks / stale rows). */
+const MAX_SNAPSHOT_ELAPSED_SEC = 4 * 60 * 60;
+
+/**
+ * Convert the persisted cinema row into the live cinema payload a client
+ * applies. A still-playing watch advances from its stored position by the
+ * wall-clock time elapsed since the row was written — the same anchoring the
+ * shared timer uses — so a joiner lands on the live playback point.
+ */
 export function parseCinemaState(cinema: ServerCinema | null): CinemaPayload | null {
   if (!cinema) return null;
-  return { playing: cinema.playing };
+  let position = cinema.position;
+  if (cinema.playing) {
+    const elapsed = Math.min(
+      Math.max(0, (Date.now() - cinema.updated_at) / 1000),
+      MAX_SNAPSHOT_ELAPSED_SEC,
+    );
+    position += elapsed;
+  }
+  return { playing: cinema.playing, position };
 }

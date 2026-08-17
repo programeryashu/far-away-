@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Sparkles, Play } from 'lucide-react';
+import { Play } from 'lucide-react';
 import {
   buildMomentFacts,
   getMomentCache,
@@ -126,14 +126,16 @@ export const SharedMoment: React.FC<SharedMomentProps> = ({
 
   return (
     <section className="glass-panel full-width" aria-label="Shared moment">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-        <div className="flex-between">
-          <h2 style={{ fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Sparkles size={16} color="var(--text-secondary)" />
-            Shared Moment
-          </h2>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            Based on your time overlap
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+        <div className="flex-between" style={{ gap: 'var(--space-3)' }}>
+          <div>
+            <span className="eyebrow">Shared moment</span>
+            <h2 className="section-title" style={{ marginTop: '2px' }}>
+              The best time to be together
+            </h2>
+          </div>
+          <span style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-muted)', textAlign: 'right' }}>
+            based on your overlap
           </span>
         </div>
 
@@ -142,40 +144,46 @@ export const SharedMoment: React.FC<SharedMomentProps> = ({
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '1fr 1fr 1fr',
-              gap: '16px',
+              gridTemplateColumns: '1fr 1.2fr 1fr',
+              gap: 'var(--space-4)',
               alignItems: 'center',
-              textAlign: 'center',
             }}
           >
             <div>
-              <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>
+              <span className="eyebrow" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {nameA || 'User A'}
-              </div>
-              <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>{cityA.name}</div>
-              <div className="tabular" style={{ fontSize: '22px', fontWeight: 650, color: 'var(--text-primary)', marginTop: '4px' }}>
+              </span>
+              <div style={{ fontSize: 'var(--text-label-size)', color: 'var(--text-secondary)', marginTop: '2px' }}>{cityA.name}</div>
+              <div className="tabular" style={{ fontSize: '22px', fontWeight: 600, color: 'var(--text-primary)', marginTop: '6px', letterSpacing: '-0.02em' }}>
                 {facts.context.participantA.localTime}
               </div>
             </div>
 
-            <div style={{ borderLeft: '1px solid var(--border-glass)', borderRight: '1px solid var(--border-glass)' }}>
-              <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>
-                {facts.context.overlapActive ? 'Live window' : facts.hasOverlapToday ? 'Next window' : 'Overlap'}
-              </div>
-              <div style={{ fontSize: '14px', fontWeight: 600, marginTop: '4px' }}>
+            <div
+              style={{
+                borderLeft: '1px solid var(--border-glass)',
+                borderRight: '1px solid var(--border-glass)',
+                textAlign: 'center',
+                padding: '0 12px'
+              }}
+            >
+              <span className="eyebrow">
+                {facts.context.overlapActive ? 'live window' : facts.hasOverlapToday ? 'next window' : 'overlap'}
+              </span>
+              <div style={{ fontSize: 'var(--text-subheading-size)', fontWeight: 600, marginTop: '6px' }}>
                 {facts.context.bestWindow.label}
               </div>
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+              <div style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-muted)', marginTop: '2px' }}>
                 {formatMinutes(facts.totalOverlapTodayMin)} shared today
               </div>
             </div>
 
-            <div>
-              <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>
+            <div style={{ textAlign: 'right' }}>
+              <span className="eyebrow" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {nameB || 'User B'}
-              </div>
-              <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>{cityB.name}</div>
-              <div className="tabular" style={{ fontSize: '22px', fontWeight: 650, color: 'var(--text-primary)', marginTop: '4px' }}>
+              </span>
+              <div style={{ fontSize: 'var(--text-label-size)', color: 'var(--text-secondary)', marginTop: '2px' }}>{cityB.name}</div>
+              <div className="tabular" style={{ fontSize: '22px', fontWeight: 600, color: 'var(--text-primary)', marginTop: '6px', letterSpacing: '-0.02em' }}>
                 {facts.context.participantB.localTime}
               </div>
             </div>
@@ -184,45 +192,42 @@ export const SharedMoment: React.FC<SharedMomentProps> = ({
 
         {/* Recommendation surface */}
         <div
+          className="group"
           style={{
-            background: 'var(--bg-inset)',
-            border: '1px solid var(--border-glass)',
-            borderRadius: 'var(--radius-md)',
-            padding: '16px',
             display: 'flex',
             flexDirection: 'column',
-            gap: '12px',
+            gap: 'var(--space-3)'
           }}
         >
           {status === 'thinking' && (
-            <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+            <div style={{ fontSize: 'var(--text-label-size)', color: 'var(--text-secondary)' }}>
               Finding your best shared moment…
             </div>
           )}
 
           {status !== 'thinking' && rec && response && (
             <>
-              <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--accent)' }}>
+              <div style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, color: 'var(--accent)' }}>
                 Best fit:{' '}
                 <span style={{ color: 'var(--text-primary)' }}>
                   {rec.durationMinutes}-minute {label}
                 </span>
               </div>
-              <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+              <div style={{ fontSize: 'var(--text-label-size)', color: 'var(--text-secondary)' }}>
                 {rec.explanation}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
                 <button
                   onClick={handleStart}
                   className="btn btn-primary"
                   disabled={started}
-                  style={{ gap: '6px', padding: '8px 16px', fontSize: '13px' }}
+                  style={{ gap: '6px', padding: '8px 16px', fontSize: 'var(--text-label-size)' }}
                 >
                   <Play size={14} />
                   {rec.activity === 'chat' ? 'Go to Chat' : 'Start Together'}
                 </button>
                 {started && (
-                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  <span style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-secondary)' }}>
                     {rec.activity === 'chat'
                       ? 'Opening the conversation…'
                       : hasPeer

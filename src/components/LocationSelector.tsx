@@ -157,14 +157,17 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
 
   return (
     <div className="glass-panel" style={{ position: 'relative' }}>
-      <h3 style={{ fontSize: '15px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-        <MapPin size={16} color={colorTheme === 'primary' ? 'var(--primary)' : 'var(--secondary)'} />
+      <h3
+        className="section-title"
+        style={{ fontSize: 'var(--text-subheading-size)', marginBottom: 'var(--space-4)' }}
+      >
+        <MapPin size={15} color={colorTheme === 'primary' ? 'var(--primary)' : 'var(--secondary)'} />
         {label}
       </h3>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
         <div>
-          <label htmlFor={`username-${label}`}>User Name</label>
+          <label htmlFor={`username-${label}`}>Name</label>
           <input
             id={`username-${label}`}
             type="text"
@@ -181,18 +184,18 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
         <div style={{ position: 'relative' }}>
           <div className="flex-between" style={{ marginBottom: '6px' }}>
             <label htmlFor={`search-${label}`} style={{ marginBottom: 0 }}>
-              Location (City)
+              Location
             </label>
             <button
               type="button"
               onClick={handleUseMyLocation}
               disabled={disabled || !geoSupported || locating}
               className="btn btn-outline"
-              style={{ padding: '5px 10px', fontSize: '11px', borderRadius: 'var(--radius-sm)', gap: '6px' }}
+              style={{ padding: '5px 10px', fontSize: 'var(--text-meta-size)', borderRadius: 'var(--radius-sm)', gap: '6px' }}
               aria-label="Use my current location"
             >
               <Locate size={12} color={locating ? 'var(--primary)' : 'var(--text-secondary)'} />
-              {locating ? 'Locating...' : 'Use my location'}
+              {locating ? 'Locating…' : 'Use my location'}
             </button>
           </div>
           <div style={{ position: 'relative' }}>
@@ -209,6 +212,8 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
               placeholder={`${selectedCity.name}, ${selectedCity.country}`}
               style={{ paddingRight: '40px' }}
               disabled={disabled}
+              aria-autocomplete="list"
+              aria-expanded={showDropdown}
             />
             <Search
               size={18}
@@ -223,58 +228,61 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
           </div>
 
           {geoError && (
-            <div style={{ marginTop: '6px', fontSize: '12px', color: '#f87171' }}>
+            <div style={{ marginTop: '6px', fontSize: 'var(--text-meta-size)', color: 'var(--danger)' }}>
               {geoError}
             </div>
           )}
 
           {showDropdown && (
             <ul
+              role="listbox"
+              aria-label="Location suggestions"
               style={{
                 position: 'absolute',
                 top: '100%',
                 left: 0,
                 right: 0,
-                background: 'rgba(15, 23, 42, 0.95)',
-                border: '1px solid var(--border-glow)',
+                background: 'var(--bg-panel)',
+                border: '1px solid var(--border-glass-strong)',
                 borderRadius: 'var(--radius-md)',
                 marginTop: '6px',
                 maxHeight: '200px',
                 overflowY: 'auto',
                 zIndex: 10,
                 listStyle: 'none',
-                boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
-                backdropFilter: 'blur(10px)'
+                boxShadow: 'var(--shadow-pop)'
               }}
             >
               {loading && (
-                <li style={{ padding: '12px', color: 'var(--text-muted)', fontSize: '14px' }}>
-                  Searching satellite locations...
+                <li style={{ padding: '12px', color: 'var(--text-muted)', fontSize: 'var(--text-body-size)' }}>
+                  Searching…
                 </li>
               )}
               {suggestions.map((city, idx) => (
                 <li
                   key={idx}
+                  role="option"
+                  aria-selected={false}
                   onMouseDown={() => handleSelect(city)}
                   style={{
                     padding: '10px 16px',
                     cursor: 'pointer',
-                    fontSize: '14px',
+                    fontSize: 'var(--text-body-size)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     borderBottom: idx === suggestions.length - 1 ? 'none' : '1px solid rgba(255,255,255,0.05)',
                     transition: 'background 0.2s'
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(99, 102, 241, 0.15)')}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-panel-hover)')}
                   onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                 >
                   <span style={{ fontWeight: 500 }}>{city.name}</span>
-                  <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{city.country}</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: 'var(--text-meta-size)' }}>{city.country}</span>
                 </li>
               ))}
               {suggestions.length === 0 && !loading && (
-                <li style={{ padding: '12px', color: 'var(--text-muted)', fontSize: '14px' }}>
+                <li style={{ padding: '12px', color: 'var(--text-muted)', fontSize: 'var(--text-body-size)' }}>
                   No locations found. Try another spelling.
                 </li>
               )}
@@ -283,25 +291,18 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
         </div>
 
         <div
+          className="tabular"
           style={{
-            marginTop: '8px',
-            background: 'rgba(255,255,255,0.02)',
-            padding: '10px 14px',
-            borderRadius: 'var(--radius-sm)',
-            border: '1px solid rgba(255,255,255,0.04)',
+            marginTop: 'var(--space-1)',
+            fontSize: 'var(--text-meta-size)',
+            color: 'var(--text-muted)',
             display: 'flex',
             alignItems: 'center',
-            gap: '8px',
-            fontSize: '13px'
+            gap: 'var(--space-2)'
           }}
         >
-          <Navigation size={14} color="var(--text-muted)" />
-          <div>
-            <span style={{ color: 'var(--text-muted)' }}>Coordinates: </span>
-            <span style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>
-              {Math.abs(selectedCity.lat).toFixed(4)}°{latDirection}, {Math.abs(selectedCity.lng).toFixed(4)}°{lngDirection}
-            </span>
-          </div>
+          <Navigation size={13} color="var(--text-muted)" />
+          {Math.abs(selectedCity.lat).toFixed(4)}°{latDirection}, {Math.abs(selectedCity.lng).toFixed(4)}°{lngDirection}
         </div>
       </div>
     </div>

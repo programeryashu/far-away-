@@ -124,8 +124,8 @@ const stateFrame = (opts: { snapshotSeq?: number; messages?: ServerMessage[]; pe
 const chatFrame = (id: string, text: string, seq: number, sender = 'Bob', peerId = 'p2') =>
   env('chat', { id, peerId, sender, text, seq, timestamp: Date.now() }, seq);
 
-const aNameInput = () => document.getElementById('username-Host Terminal (User A)') as HTMLInputElement;
-const bNameInput = () => document.getElementById('username-Remote Node (User B)') as HTMLInputElement;
+const aNameInput = () => document.getElementById('username-Person A') as HTMLInputElement;
+const bNameInput = () => document.getElementById('username-Person B') as HTMLInputElement;
 
 describe('App session state machine', () => {
   beforeEach(() => {
@@ -151,7 +151,7 @@ describe('App session state machine', () => {
 
   it('renders local mode by default with no leave button', () => {
     render(<App />);
-    expect(screen.getByText('Local mode')).toBeTruthy();
+    expect(screen.getByText('Local')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /leave the current session/i })).toBeNull();
     // Both sides are editable in local mode.
     expect(aNameInput().disabled).toBe(false);
@@ -160,7 +160,7 @@ describe('App session state machine', () => {
 
   it('creates a session as A, connects, sees the peer, then leaves back to local mode', async () => {
     api.createSession.mockResolvedValue({ id: 's1', code: 'ABC123', expiresAt: Date.now() + 3_600_000 });
-    api.joinSession.mockResolvedValue({ peerId: 'p1', role: 'a' });
+    api.joinSession.mockResolvedValue({ peerId: 'p1', role: 'a', token: 'tok-a' });
     api.leaveSession.mockResolvedValue(undefined);
 
     render(<App />);
@@ -169,22 +169,23 @@ describe('App session state machine', () => {
     // Joining → connected once the socket opens.
     await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
     act(() => lastWs().open());
-    await waitFor(() => expect(screen.getByText('Connected · waiting for peer')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Connected · waiting for your person')).toBeTruthy());
 
     // Presence stays distinct from connection status.
     act(() => lastWs().emit(env('peer-joined', { peerId: 'p2', displayName: 'Kimi', cityJson })));
-    await waitFor(() => expect(screen.getByText('Connected · peer online')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Connected · your person is online')).toBeTruthy());
     act(() => lastWs().emit(env('peer-left', { peerId: 'p2' })));
-    await waitFor(() => expect(screen.getByText('Connected · waiting for peer')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Connected · waiting for your person')).toBeTruthy());
 
     // A owns side A: B's panel is read-only.
     expect(bNameInput().disabled).toBe(true);
     expect(aNameInput().disabled).toBe(false);
 
     // Leave: session metadata cleared, local app data kept, UI back to local.
+    // The leave request carries the peer's session token (authorization).
     fireEvent.click(screen.getByRole('button', { name: /leave the current session/i }));
-    await waitFor(() => expect(screen.getByText('Local mode')).toBeTruthy());
-    expect(api.leaveSession).toHaveBeenCalledWith('s1', 'p1');
+    await waitFor(() => expect(screen.getByText('Local')).toBeTruthy());
+    expect(api.leaveSession).toHaveBeenCalledWith('s1', 'p1', 'tok-a');
     expect(localStorage.getItem('orbit.session')).toBeNull();
     expect(JSON.parse(localStorage.getItem('faraway.connection') ?? '{}').a.name).toBe('Yash');
     expect(aNameInput().value).toBe('Yash');
@@ -193,8 +194,8 @@ describe('App session state machine', () => {
     // The server kicks the socket during leave; a close landing after the UI
     // has already returned to local mode must not override that state.
     act(() => FakeWebSocket.instances[0].close(1000));
-    expect(screen.getByText('Local mode')).toBeTruthy();
-    expect(screen.queryByText('Disconnected')).toBeNull();
+    expect(screen.getByText('Local')).toBeTruthy();
+    expect(screen.queryByText('Connection lost')).toBeNull();
   });
 
   it('joins as B via invite: role applied, peer identity applied, presence live', async () => {
@@ -208,7 +209,7 @@ describe('App session state machine', () => {
     fireEvent.click(screen.getByRole('button', { name: /join session/i }));
     await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
     act(() => lastWs().open());
-    await waitFor(() => expect(screen.getByText('Connected · waiting for peer')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Connected · waiting for your person')).toBeTruthy());
 
     // Role b: A's panel is read-only, B's is editable.
     expect(aNameInput().disabled).toBe(true);
@@ -217,10 +218,10 @@ describe('App session state machine', () => {
     // Remote identity from the live peer lands on the peer's side (A).
     act(() => lastWs().emit(env('peer-joined', { peerId: 'p1', displayName: 'Yash', cityJson })));
     await waitFor(() => expect(aNameInput().value).toBe('Yash'));
-    expect(screen.getByText('Connected · peer online')).toBeTruthy();
+    expect(screen.getByText('Connected · your person is online')).toBeTruthy();
 
     act(() => lastWs().emit(env('peer-left', { peerId: 'p1' })));
-    await waitFor(() => expect(screen.getByText('Connected · waiting for peer')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Connected · waiting for your person')).toBeTruthy());
   });
 
   it('shows a friendly error for an invalid/expired invite and never raw server text', async () => {
@@ -236,7 +237,7 @@ describe('App session state machine', () => {
 
     // Leaving the error returns to local mode.
     fireEvent.click(screen.getByRole('button', { name: /^leave session/i }));
-    await waitFor(() => expect(screen.getByText('Local mode')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Local')).toBeTruthy());
   });
 
   it('reports a full session as a friendly 409 message', async () => {
@@ -261,7 +262,7 @@ describe('App session state machine', () => {
         screen.getByText('Cannot reach the Orbit server. Make sure the backend is running, then try again.'),
       ).toBeTruthy(),
     );
-    expect(screen.queryByText('Local mode')).toBeNull();
+    expect(screen.queryByText('Local')).toBeNull();
   });
 
   it('falls back to the local share link when the backend is unreachable for the creator', async () => {
@@ -270,7 +271,7 @@ describe('App session state machine', () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: /copy shareable connection link/i }));
 
-    await waitFor(() => expect(screen.getByText('Local mode')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Local')).toBeTruthy());
     expect(screen.getByText(/copy this link manually/i)).toBeTruthy();
     expect(screen.getByText(/a=Yash/)).toBeTruthy();
   });
@@ -282,7 +283,7 @@ describe('App session state machine', () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
     const ws1 = lastWs();
     act(() => ws1.open());
-    expect(screen.getByText('Connected · waiting for peer')).toBeTruthy();
+    expect(screen.getByText('Connected · waiting for your person')).toBeTruthy();
 
     // Send a chat while connected.
     const input = screen.getByLabelText(/Message Kimi/);
@@ -301,7 +302,7 @@ describe('App session state machine', () => {
     expect(FakeWebSocket.instances).toHaveLength(2);
     const ws2 = lastWs();
     act(() => ws2.open());
-    expect(screen.getByText('Connected · waiting for peer')).toBeTruthy();
+    expect(screen.getByText('Connected · waiting for your person')).toBeTruthy();
 
     // No duplicate connection, no duplicate messages, catch-up requested.
     expect(FakeWebSocket.instances).toHaveLength(2);
@@ -321,7 +322,7 @@ describe('App session state machine', () => {
         await vi.advanceTimersByTimeAsync(60_000);
       });
     }
-    expect(screen.getByText('Disconnected')).toBeTruthy();
+    expect(screen.getByText('Connection lost')).toBeTruthy();
     expect(FakeWebSocket.instances).toHaveLength(6);
   });
 
@@ -435,13 +436,13 @@ describe('App session state machine', () => {
 
   it('puts a validated chat frame on the wire and dedupes inbound history', async () => {
     api.createSession.mockResolvedValue({ id: 's1', code: 'ABC123', expiresAt: Date.now() + 3_600_000 });
-    api.joinSession.mockResolvedValue({ peerId: 'p1', role: 'a' });
+    api.joinSession.mockResolvedValue({ peerId: 'p1', role: 'a', token: 'tok-a' });
 
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: /copy shareable connection link/i }));
     await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
     act(() => lastWs().open());
-    await waitFor(() => expect(screen.getByText('Connected · waiting for peer')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Connected · waiting for your person')).toBeTruthy());
 
     const input = screen.getByLabelText(/Message Kimi/);
     fireEvent.change(input, { target: { value: 'hi there' } });
@@ -487,7 +488,7 @@ describe('App session state machine', () => {
 
     // The existing realtime system (not a special AI transport) executed it:
     // the shared focus timer opened with a running countdown.
-    expect(screen.getByText('Deep Space Cafe & Focus Timer')).toBeTruthy();
+    expect(screen.getByText('Deep Space Coffee')).toBeTruthy();
     expect(screen.getByText(/shared focus session started on your device/i)).toBeTruthy();
   });
 });

@@ -76,7 +76,7 @@ describe('ActivityFinder', () => {
 
   it('sends exactly one timer action per click and reflects inbound state', () => {
     const { conn, emit } = renderFinder();
-    fireEvent.click(screen.getAllByText('Initialize Session')[2]); // Deep Space Coffee
+    fireEvent.click(screen.getByRole('button', { name: 'Open Deep Space Coffee' })); // Deep Space Coffee
 
     const startBtn = screen.getByRole('button', { name: /start/i });
     fireEvent.click(startBtn);
@@ -121,47 +121,91 @@ describe('ActivityFinder', () => {
     emit(
       makeEnvelope({
         event: 'state',
-        payload: { cinema: { session_id: 's1', playing: true, updated_at: 1 } },
+        payload: {
+          cinema: { session_id: 's1', playing: true, position: 30, updated_at: Date.now() - 5000 },
+        },
       }) as unknown as ServerEnvelope,
     );
-    // Opening SynchroCinema shows the shared watch already playing.
-    fireEvent.click(screen.getAllByText('Initialize Session')[0]); // SynchroCinema
+    // Opening SynchroCinema shows the shared watch already playing, and the
+    // video resumes from the wall-clock-advanced position once metadata loads.
+    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' })); // SynchroCinema
     expect(screen.getByRole('button', { name: 'Pause playback' })).toBeTruthy();
+    const video = document.querySelector('video') as HTMLVideoElement;
+    expect(video).toBeTruthy();
+    fireEvent(video, new Event('loadedmetadata'));
+    expect(video.currentTime).toBeGreaterThanOrEqual(35);
+    expect(video.currentTime).toBeLessThanOrEqual(35.5);
   });
 
   it('sends a cinema toggle exactly once per click and mirrors the peer', () => {
     const { conn, emit } = renderFinder();
-    fireEvent.click(screen.getAllByText('Initialize Session')[0]); // SynchroCinema
+    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' })); // SynchroCinema
 
-    const modal = screen.getByText('SynchroCinema Control Center').closest('.glass-panel') as HTMLElement;
+    const modal = screen.getByText('SynchroCinema').closest('.glass-panel') as HTMLElement;
     const play = modal.querySelector('button.btn-primary') as HTMLButtonElement;
 
     fireEvent.click(play);
     expect(conn.send).toHaveBeenCalledTimes(1);
-    expect(conn.send).toHaveBeenCalledWith('cinema', { playing: true });
+    expect(conn.send).toHaveBeenCalledWith('cinema', { playing: true, position: 0 });
 
-    // Peer paused → the reaction log and play state mirror the peer.
-    emit(makeEnvelope({ event: 'cinema', payload: { playing: false } }) as ServerEnvelope);
-    expect(screen.getByText(/Bob pressed PAUSE/)).toBeTruthy();
+    // Peer paused at a different position → the play state mirrors the peer
+    // and the local video seeks to the peer's position.
+    emit(
+      makeEnvelope({ event: 'cinema', payload: { playing: false, position: 20 } }) as ServerEnvelope,
+    );
+    expect(screen.getByText(/Bob pressed PAUSE at 00:20/)).toBeTruthy();
+    const video = document.querySelector('video') as HTMLVideoElement;
+    expect(video.currentTime).toBe(20);
 
     fireEvent.click(play);
     expect(conn.send).toHaveBeenCalledTimes(2);
-    expect(conn.send).toHaveBeenCalledWith('cinema', { playing: true });
+    expect(conn.send).toHaveBeenCalledWith('cinema', { playing: true, position: 20 });
   });
 
-  it('sends completed canvas strokes and clears exactly once', () => {
+  it('seeks propagate to the peer and re-anchor local playback', () => {
     const { conn } = renderFinder();
-    fireEvent.click(screen.getAllByText('Initialize Session')[1]); // Galactic Canvas
+    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' })); // SynchroCinema
+
+    const seek = screen.getByLabelText('Seek video') as HTMLInputElement;
+    // Range inputs fire native `input` events on drag (React binds onChange to it).
+    fireEvent.input(seek, { target: { value: '15' } });
+    expect(conn.send).toHaveBeenCalledWith('cinema', { playing: false, position: 15 });
+    expect(document.querySelector('video')!.currentTime).toBe(15);
+  });
+
+  it('sends completed canvas strokes via pointer events (mouse and touch) and clears exactly once', () => {
+    const { conn } = renderFinder();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Galactic Canvas' })); // Galactic Canvas
 
     const canvas = document.querySelector('canvas') as HTMLCanvasElement;
-    fireEvent.mouseDown(canvas, { clientX: 10, clientY: 10 });
-    fireEvent.mouseUp(canvas, { clientX: 20, clientY: 20 });
+
+    // Mouse pointer.
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10, pointerId: 1, pointerType: 'mouse' });
+    fireEvent.pointerMove(canvas, { clientX: 15, clientY: 12, pointerId: 1, pointerType: 'mouse' });
+    fireEvent.pointerUp(canvas, { clientX: 20, clientY: 20, pointerId: 1, pointerType: 'mouse' });
     expect(conn.send).toHaveBeenCalledWith(
       'canvas-stroke',
-      expect.objectContaining({ points: expect.any(Array), color: expect.any(String) }),
+      expect.objectContaining({
+        points: [
+          { x: 10, y: 10 },
+          { x: 15, y: 12 },
+          { x: 20, y: 20 },
+        ],
+        color: expect.any(String),
+      }),
     );
 
-    fireEvent.click(screen.getByText('Clear Canvas'));
+    // Touch pointer — the phone path.
+    fireEvent.pointerDown(canvas, { clientX: 30, clientY: 30, pointerId: 2, pointerType: 'touch' });
+    fireEvent.pointerUp(canvas, { clientX: 40, clientY: 40, pointerId: 2, pointerType: 'touch' });
+    expect(conn.send).toHaveBeenCalledTimes(2);
+
+    // A cancelled stroke still finalizes (pointercancel = e.g. incoming call).
+    fireEvent.pointerDown(canvas, { clientX: 50, clientY: 50, pointerId: 3, pointerType: 'touch' });
+    fireEvent.pointerCancel(canvas, { pointerId: 3, pointerType: 'touch' });
+    expect(conn.send).toHaveBeenCalledTimes(3);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
     expect(conn.send).toHaveBeenCalledWith('canvas-clear', {});
   });
 
@@ -178,7 +222,7 @@ describe('ActivityFinder', () => {
     );
 
     // The activity opens and the canonical timer action fires exactly once.
-    expect(screen.getByText('Deep Space Cafe & Focus Timer')).toBeTruthy();
+    expect(screen.getByText('Deep Space Coffee')).toBeTruthy();
     expect(fake.conn.send).toHaveBeenCalledTimes(1);
     expect(fake.conn.send).toHaveBeenCalledWith(
       'timer',
@@ -211,9 +255,9 @@ describe('ActivityFinder', () => {
         launchRequest={{ type: 'cinema', nonce: 7 }}
       />,
     );
-    expect(screen.getByText('SynchroCinema Control Center')).toBeTruthy();
+    expect(screen.getByText('SynchroCinema')).toBeTruthy();
     expect(fake.conn.send).toHaveBeenCalledTimes(1);
-    expect(fake.conn.send).toHaveBeenCalledWith('cinema', { playing: true });
+    expect(fake.conn.send).toHaveBeenCalledWith('cinema', { playing: true, position: 0 });
   });
 
   it('opens the canvas from a Start Together launch without inventing events', () => {
@@ -227,7 +271,7 @@ describe('ActivityFinder', () => {
         launchRequest={{ type: 'canvas', nonce: 3 }}
       />,
     );
-    expect(screen.getByText('Galactic Canvas Collaboration')).toBeTruthy();
+    expect(screen.getByText('Galactic Canvas')).toBeTruthy();
     expect(fake.conn.send).not.toHaveBeenCalled();
   });
 });

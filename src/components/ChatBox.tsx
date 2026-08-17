@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Send, MessageSquare, CheckCheck } from 'lucide-react';
 import type { Connection } from '../lib/connection';
 import { mergeMessages, serverMessagesToClient } from '../lib/reconcile';
+import { haversineKm } from '../lib/geo';
 
 // Module-level monotonic counter for message IDs (avoids Date.now() in render/event closures).
 // The random suffix keeps IDs unique across two tabs on the same origin.
@@ -17,12 +18,23 @@ interface ChatBoxProps {
   connection: Connection;
   /** True when a second peer is connected right now. */
   hasPeer: boolean;
+  /**
+   * This client's server peerId ('' in local mode). "Is me" is decided by
+   * peerId, never by display name — two peers may share a name.
+   */
+  myPeerId: string;
 }
 
 interface Message {
   id: string;
   /** Server-assigned id, adopted when the ack for a locally-sent message arrives. */
   serverId?: string;
+  /** Author's server peerId ('' when unknown, e.g. local-mode peers). */
+  peerId?: string;
+  /** True for messages this client sent — the alignment source of truth. */
+  own?: boolean;
+  /** True for local solo-mode preview replies — always labeled as such. */
+  simulated?: boolean;
   sender: string;
   text: string;
   timestamp: string;
@@ -35,7 +47,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   nameA,
   nameB,
   connection,
-  hasPeer
+  hasPeer,
+  myPeerId
 }) => {
   // This tab is one of the two people; the connection knows which side is
   // mine (tab side locally, server role in a session). Messages from my own
@@ -48,6 +61,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     {
       id: '1',
       sender: peerName,
+      simulated: true,
       text: `Hey! Set up your location so we can calculate our orbital connection map.`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       status: 'delivered'
@@ -63,13 +77,17 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
   // Inbound chat from a real peer — arrive as delivered, never auto-reply.
   // Dedupe by id so history and live broadcasts never duplicate; the ack
-  // swaps our local id for the server id. Both transports deliver the same
+  // swaps our local id for the server id. "Own" is decided by peerId: an
+  // echo of our own server id (a reconnect replay) still aligns right even
+  // when both peers share a display name. Both transports deliver the same
   // typed envelopes, so this one handler covers local and remote.
   useEffect(() => {
     return connection.onEvent((env) => {
       if (env.event === 'chat') {
         const inbound: Message = {
           id: env.payload.id,
+          peerId: env.payload.peerId,
+          own: env.payload.peerId !== '' && env.payload.peerId === myPeerId,
           sender: env.payload.sender || 'Peer',
           text: env.payload.text,
           timestamp: new Date(env.payload.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -83,26 +101,17 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
           );
         }
       } else if (env.event === 'state') {
-        setMessages((prev) => mergeMessages(prev, serverMessagesToClient(env.payload.messages)));
+        const history = serverMessagesToClient(env.payload.messages).map((m) => ({
+          ...m,
+          peerId: env.payload.messages.find((row) => row.id === m.id)?.sender_peer,
+          own: env.payload.messages.some((row) => row.id === m.id && row.sender_peer !== '' && row.sender_peer === myPeerId),
+        }));
+        setMessages((prev) => mergeMessages(prev, history));
       }
     });
-  }, [connection]);
+  }, [connection, myPeerId]);
 
-  // Haversine distance
-  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371;
-    const dLat = ((lat2 - lat1) * Math.PI) / 180;
-    const dLon = ((lon2 - lon1) * Math.PI) / 180;
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((lat1 * Math.PI) / 180) *
-        Math.cos((lat2 * Math.PI) / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  };
-
-  const distance = calculateDistance(cityA.lat, cityA.lng, cityB.lat, cityB.lng);
+  const distance = haversineKm(cityA.lat, cityA.lng, cityB.lat, cityB.lng);
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
@@ -112,6 +121,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     const newMessage: Message = {
       id: userMsgId,
       sender: ownName,
+      own: true,
       text: inputText,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       status: 'sending'
@@ -186,6 +196,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         {
           id: nextMessageId(),
           sender: peerName,
+          simulated: true,
           text: replyText,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           status: 'delivered'
@@ -195,103 +206,91 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   };
 
   return (
-    <div id="chat-box" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '400px' }}>
+    <div id="chat-box" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '420px', maxHeight: '70vh' }}>
       {/* Header */}
       <div
         className="flex-between"
         style={{
           borderBottom: '1px solid var(--border-glass)',
-          paddingBottom: '12px',
-          marginBottom: '12px'
+          paddingBottom: 'var(--space-3)',
+          marginBottom: 'var(--space-3)'
         }}
       >
         <div>
-          <h3 style={{ fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <MessageSquare size={16} color="var(--text-secondary)" />
-            Chat
+          <h3 className="section-title" style={{ fontSize: 'var(--text-subheading-size)' }}>
+            <MessageSquare size={15} color="var(--text-secondary)" />
+            Conversation
           </h3>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-            Messages sync over the {connection.mode === 'remote' ? 'session' : 'local'} channel
+          <span style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-muted)' }}>
+            {hasPeer
+              ? 'live with your peer'
+              : connection.mode === 'remote'
+                ? 'messages deliver when they rejoin'
+                : 'solo: open a second tab or share a connection'}
           </span>
         </div>
       </div>
 
-      {/* Messages area */}
+      {/* Messages */}
       <div
+        className="chat-log"
         style={{
           flexGrow: 1,
           overflowY: 'auto',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '12px',
           paddingRight: '6px',
-          marginBottom: '16px'
+          marginBottom: 'var(--space-4)'
         }}
+        aria-live="polite"
+        aria-label="Messages"
       >
+        {messages.length === 0 && (
+          <div className="chat-empty">
+            No messages yet. Say hi when you're both around.
+          </div>
+        )}
         {messages.map((msg) => {
-          const isMe = msg.sender === ownName;
+          // Alignment comes from ownership (peerId decided at receive/send
+          // time), never from comparing display names.
+          const isMe = msg.own === true;
           return (
-            <div
-              key={msg.id}
-              style={{
-                alignSelf: isMe ? 'flex-end' : 'flex-start',
-                maxWidth: '80%',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: isMe ? 'flex-end' : 'flex-start'
-              }}
-            >
-              <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '2px' }}>
-                {msg.sender}
+            <div key={msg.id} className={`chat-message ${isMe ? 'own' : 'peer'}`}>
+              <span className="chat-meta">
+                {msg.simulated && <span className="chat-sim-tag">simulated</span>}
+                {msg.sender} · {msg.timestamp}
               </span>
-              <div
-                style={{
-                  background: isMe ? 'var(--primary)' : 'rgba(255, 255, 255, 0.04)',
-                  border: isMe ? 'none' : '1px solid var(--border-glass)',
-                  padding: '10px 14px',
-                  borderRadius: isMe ? '14px 14px 2px 14px' : '14px 14px 14px 2px',
-                  color: 'white',
-                  fontSize: '14px',
-                  lineHeight: '1.4'
-                }}
-              >
-                {msg.text}
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
-                <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{msg.timestamp}</span>
-                {isMe && (
-                  <span style={{ display: 'flex', alignItems: 'center' }}>
-                    {msg.status === 'delivered' ? (
-                      <CheckCheck size={12} color="var(--accent)" />
-                    ) : (
-                      <span
-                        style={{
-                          width: '6px',
-                          height: '6px',
-                          borderRadius: '50%',
-                          background: 'var(--text-muted)',
-                          display: 'inline-block'
-                        }}
-                      />
-                    )}
-                  </span>
-                )}
-              </div>
+              <div className="chat-bubble">{msg.text}</div>
+              {isMe && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', marginTop: '3px' }}>
+                  {msg.status === 'delivered' ? (
+                    <CheckCheck size={12} color="var(--accent)" />
+                  ) : (
+                    <span
+                      style={{
+                        width: '6px',
+                        height: '6px',
+                        borderRadius: '50%',
+                        background: 'var(--text-muted)',
+                        display: 'inline-block'
+                      }}
+                    />
+                  )}
+                </span>
+              )}
             </div>
           );
         })}
         <div ref={chatEndRef} />
       </div>
 
-      {/* Input area */}
-      <form onSubmit={handleSend} style={{ display: 'flex', gap: '10px' }}>
+      {/* Input */}
+      <form onSubmit={handleSend} style={{ display: 'flex', gap: 'var(--space-2)' }}>
         <input
           type="text"
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
-          placeholder={`Message ${peerName}...`}
+          placeholder={`Message ${peerName}…`}
           aria-label={`Message ${peerName}`}
-          style={{ flexGrow: 1 }}
+          style={{ flexGrow: 1, minWidth: 0 }}
         />
         <button type="submit" className="btn btn-primary" style={{ padding: '0 16px' }} aria-label="Send message">
           <Send size={16} />

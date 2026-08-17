@@ -167,13 +167,35 @@ describe("parseTimerState", () => {
 });
 
 describe("parseCinemaState", () => {
-  it("maps a persisted cinema row to a live payload", () => {
+  it("maps a paused cinema row to its stored position without extrapolating", () => {
     expect(
-      parseCinemaState({ session_id: "s1", playing: true, updated_at: 1 }),
-    ).toEqual({ playing: true });
-    expect(
-      parseCinemaState({ session_id: "s1", playing: false, updated_at: 1 }),
-    ).toEqual({ playing: false });
+      parseCinemaState({ session_id: "s1", playing: false, position: 42, updated_at: Date.now() }),
+    ).toEqual({ playing: false, position: 42 });
+  });
+
+  it("advances a playing row's position by the wall-clock time since updated_at", () => {
+    const row = {
+      session_id: "s1",
+      playing: true,
+      position: 10,
+      updated_at: Date.now() - 30_000, // 30s ago
+    };
+    const parsed = parseCinemaState(row)!;
+    expect(parsed.playing).toBe(true);
+    // Allow a little slack for the clock read inside the parser.
+    expect(parsed.position).toBeGreaterThanOrEqual(40);
+    expect(parsed.position).toBeLessThanOrEqual(40.5);
+  });
+
+  it("caps extrapolation so a stale/corrupt row cannot seek absurdly far", () => {
+    const row = {
+      session_id: "s1",
+      playing: true,
+      position: 10,
+      updated_at: Date.now() - 100 * 60 * 60 * 1000, // 100h ago
+    };
+    const parsed = parseCinemaState(row)!;
+    expect(parsed.position).toBeLessThanOrEqual(10 + 4 * 60 * 60 + 1);
   });
 
   it("returns null when there is no persisted cinema", () => {

@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Clock } from 'lucide-react';
+import { haversineKm } from '../lib/geo';
 import { computeLiveWindow, formatClock } from '../lib/time';
 
 interface LiveWindowProps {
-  cityA: { name: string; timezone: string };
-  cityB: { name: string; timezone: string };
+  cityA: { name: string; lat: number; lng: number; timezone: string };
+  cityB: { name: string; lat: number; lng: number; timezone: string };
   nameA: string;
   nameB: string;
   hasPeer: boolean;
+  /** This client's session role — marks which side is "you". Null in local mode. */
+  role?: 'a' | 'b' | null;
 }
 
 const formatHours = (hours: number): string => {
@@ -17,12 +19,26 @@ const formatHours = (hours: number): string => {
   return `${h}h ${m}m`;
 };
 
+const localTime = (date: Date, timeZone: string): string => {
+  try {
+    return date.toLocaleTimeString('en-US', { timeZone, hour: 'numeric', minute: '2-digit' });
+  } catch {
+    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+};
+
+/**
+ * The shared-time signature — Orbit's centerpiece. Two people, two clocks,
+ * one number between them: the time they share today. Everything else on
+ * the page exists to spend that time well.
+ */
 export const LiveWindow: React.FC<LiveWindowProps> = ({
   cityA,
   cityB,
   nameA,
   nameB,
-  hasPeer
+  hasPeer,
+  role = null
 }) => {
   const [now, setNow] = useState(() => new Date());
 
@@ -35,108 +51,149 @@ export const LiveWindow: React.FC<LiveWindowProps> = ({
   const info = computeLiveWindow(cityA.timezone, cityB.timezone, now);
   const activeSeconds =
     info.active && info.activeEnd !== null ? (info.activeEnd - info.nowLocalA) * 3600 : 0;
+  const distanceKm = haversineKm(cityA.lat, cityA.lng, cityB.lat, cityB.lng);
 
   const scrollToActivities = () => {
     document.getElementById('activity-center')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const statusColor = info.active ? 'var(--accent)' : 'var(--text-muted)';
-  const statusLabel = info.active ? 'Live now' : 'Waiting for the live window';
+  const statusLabel = info.active ? 'Live now' : 'Next window';
 
   return (
-    <section
-      className="glass-panel full-width"
-      aria-label="Our live window"
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-        <div className="flex-between">
-          <h2 style={{ fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Clock size={18} color={statusColor} />
-            Live Window
-          </h2>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            {hasPeer ? 'Peer connected' : 'Solo preview'}
-          </span>
-        </div>
-
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'auto 1fr auto',
-            alignItems: 'center',
-            gap: '24px',
-            flexWrap: 'wrap'
-          }}
-        >
-          {/* Headline stat */}
-          <div style={{ textAlign: 'left', minWidth: '180px' }}>
-            <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>
-              Live time today
-            </div>
-            <div
-              style={{
-                fontSize: '40px',
-                fontWeight: 800,
-                letterSpacing: '-0.03em',
-                lineHeight: 1.1,
-                color: info.totalHours > 0 ? '#fff' : 'var(--text-muted)'
-              }}
+    <section className="glass-panel full-width" aria-label="Our live window">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+        {/* The signature: their clock / the shared number / your clock. On a
+            phone this stacks into the calm vertical composition. */}
+        <div className="time-signature" aria-label="Local times and shared time today">
+          {/* Person A */}
+          <div className="sig-side">
+            <span
+              className="eyebrow"
+              style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
             >
+              {role === 'a' && <span style={{ color: 'var(--primary)' }}>you · </span>}
+              {nameA || 'User A'}
+            </span>
+            <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+              {cityA.name}
+            </div>
+            <div className="time-display" style={{ marginTop: '6px' }}>
+              {localTime(now, cityA.timezone)}
+            </div>
+          </div>
+
+          <hr className="hairline sig-divider" aria-hidden="true" />
+
+          {/* The one shared number */}
+          <div className="sig-metric" style={{ textAlign: 'center', minWidth: '180px', padding: '0 8px' }}>
+            <span className="eyebrow">shared time today</span>
+            <div className="metric" style={{ marginTop: '2px' }}>
               {formatHours(info.totalHours)}
             </div>
-            <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-              {nameA || 'User A'} × {nameB || 'User B'} both awake &amp; free
+            <div style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-secondary)', marginTop: '4px' }}>
+              both awake &amp; free
             </div>
           </div>
 
-          {/* Countdown / next window */}
-          <div style={{ textAlign: 'center' }}>
+          <hr className="hairline sig-divider" aria-hidden="true" />
+
+          {/* Person B */}
+          <div className="sig-side sig-side--them">
+            <span
+              className="eyebrow"
+              style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            >
+              {role === 'b' && <span style={{ color: 'var(--primary)' }}>you · </span>}
+              {nameB || 'User B'}
+            </span>
+            <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+              {cityB.name}
+            </div>
+            <div className="time-display" style={{ marginTop: '6px' }}>
+              {localTime(now, cityB.timezone)}
+            </div>
+          </div>
+        </div>
+
+        <hr className="hairline" />
+
+        {/* The window itself: live countdown or when the next one opens. */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 'var(--space-4)',
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
             <div
               style={{
-                fontSize: '13px',
-                fontWeight: 650,
-                color: statusColor
+                fontSize: 'var(--text-label-size)',
+                fontWeight: 600,
+                color: statusColor,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '7px',
               }}
             >
+              <span className="status-dot" style={{ background: statusColor }} />
               {statusLabel}
+              {info.active && hasPeer ? ' · spend it together' : ''}
             </div>
-            {info.active ? (
-              <div
-                style={{
-                  fontSize: '28px',
-                  fontWeight: 650,
-                  fontFamily: 'monospace',
-                  color: 'var(--accent)',
-                  marginTop: '4px'
-                }}
-              >
-                {formatClock(activeSeconds)}
-              </div>
-            ) : (
-              <div style={{ fontSize: '18px', fontFamily: 'monospace', color: 'var(--text-secondary)', marginTop: '6px' }}>
-                next window opens in {info.nextOpenIn !== null ? formatClock(info.nextOpenIn) : '--:--'}
-              </div>
-            )}
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+            <div
+              className="tabular"
+              style={{
+                fontSize: '22px',
+                fontWeight: 600,
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--text-primary)',
+                marginTop: '2px',
+              }}
+            >
               {info.active
-                ? 'until this live block ends — spend it together'
-                : 'asynchronous until then — queue a message'}
+                ? formatClock(activeSeconds)
+                : info.nextOpenIn !== null
+                  ? `in ${formatClock(info.nextOpenIn)}`
+                  : '--:--'}
+            </div>
+            <div style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-muted)', marginTop: '2px' }}>
+              {info.active
+                ? 'left in this window'
+                : 'asynchronous until then'}
             </div>
           </div>
 
-          {/* CTA */}
-          <div style={{ textAlign: 'right' }}>
-            <button
-              onClick={scrollToActivities}
-              className="btn btn-primary"
-              aria-label="Launch a shared activity in the live window"
-            >
-              Spend it together
-            </button>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px' }}>
-              Cinema · Canvas · Focus timer
-            </div>
-          </div>
+          <button
+            onClick={scrollToActivities}
+            className="btn btn-primary"
+            aria-label="Launch a shared activity in the live window"
+          >
+            Spend it together
+          </button>
+        </div>
+
+        <hr className="hairline" />
+
+        {/* The physical fact, stated once, quietly. */}
+        <div
+          className="flex-between"
+          style={{
+            fontSize: 'var(--text-meta-size)',
+            color: 'var(--text-muted)',
+            flexWrap: 'wrap',
+            gap: 'var(--space-2)',
+          }}
+        >
+          <span className="tabular">
+            {(distanceKm).toLocaleString(undefined, { maximumFractionDigits: 0 })} km apart
+          </span>
+          <span className="tabular">
+            {(distanceKm * 0.621371).toLocaleString(undefined, { maximumFractionDigits: 0 })} miles
+          </span>
+          <span>{hasPeer ? 'peer online' : 'solo preview'}</span>
         </div>
       </div>
     </section>

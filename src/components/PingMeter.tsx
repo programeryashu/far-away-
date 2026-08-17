@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Zap, Activity } from 'lucide-react';
+import { Zap } from 'lucide-react';
 import type { Connection } from '../lib/connection';
 
 interface PingMeterProps {
@@ -79,76 +79,71 @@ export const PingMeter: React.FC<PingMeterProps> = ({ connection, hasPeer }) => 
     latency !== null
       ? `~${latency} ms`
       : status === 'pinging'
-        ? 'traversing…'
+        ? 'measuring…'
         : '—';
 
   return (
-    <div className="glass-panel full-width" aria-label="Ping the light — measured latency">
-      <div className="flex-between" style={{ flexWrap: 'wrap', gap: '16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          {/* The light: dim when idle, pulses amber while pinging, glows
+    <div className="quiet-strip" aria-label="Ping the light — measured latency">
+      <div className="flex-between" style={{ flexWrap: 'wrap', gap: 'var(--space-4)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0 }}>
+          {/* The light: dim when idle, pulses amber while pinging, steady
               teal once the peer's pong has been measured. */}
-          <div
+          <span
+            className="status-dot"
             style={{
-              width: '44px',
-              height: '44px',
-              borderRadius: '50%',
+              width: 9,
+              height: 9,
               background: lightColor,
-              border: `1px solid ${status === 'pinging' ? 'var(--secondary)' : 'rgba(255,255,255,0.18)'}`,
-              transition: 'background-color 150ms ease, border-color 150ms ease'
+              animation: status === 'pinging' ? 'pulse-soft 1s ease-in-out infinite' : 'none'
             }}
           />
-          <div>
-            <h2 style={{ fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Zap size={18} color="var(--primary)" />
-              Ping the Light
-            </h2>
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-              {connection.mode === 'remote'
-                ? 'real WebSocket round-trip'
-                : hasPeer
-                  ? 'real BroadcastChannel round-trip'
-                  : 'solo · sim fallback'}
+          <div style={{ minWidth: 0 }}>
+            <span style={{ fontSize: 'var(--text-label-size)', fontWeight: 600 }}>
+              Ping the light
             </span>
+            <div style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-muted)' }}>
+              {connection.mode === 'remote'
+                ? 'a round-trip over your live session'
+                : hasPeer
+                  ? 'a round-trip between your tabs'
+                  : 'solo: open a second tab to measure a real round-trip'}
+            </div>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)' }}>
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '11px', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
+            <div style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-muted)' }}>
               Round-trip
             </div>
             <div
+              className="tabular"
               style={{
-                fontSize: '22px',
-                fontWeight: 700,
-                fontFamily: 'monospace',
-                color: status === 'measured' ? 'var(--accent)' : 'var(--text-secondary)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px'
+                fontSize: '20px',
+                fontWeight: 600,
+                fontFamily: 'var(--font-mono)',
+                color: status === 'measured' ? 'var(--accent)' : 'var(--text-secondary)'
               }}
             >
-              <Activity size={14} color="var(--text-muted)" />
               {display}
             </div>
           </div>
 
           <button
             onClick={measure}
-            className="btn btn-primary"
-            style={{ padding: '8px 18px', fontSize: '13px' }}
+            className="btn btn-outline"
+            style={{ padding: '8px 16px', fontSize: 'var(--text-label-size)' }}
             aria-label="Send a ping and measure round-trip latency"
           >
             <Zap size={14} />
-            {status === 'pinging' ? 'Pinging…' : 'Send Ping'}
+            {status === 'pinging' ? 'Pinging…' : 'Send ping'}
           </button>
         </div>
       </div>
 
       {lastPingedAt !== null && status === 'idle' && latency === null && (
-        <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-muted)' }}>
-          No answer — open a second tab of this app to measure a real round-trip.
+        <div style={{ marginTop: 'var(--space-3)', fontSize: 'var(--text-meta-size)', color: 'var(--text-muted)' }}>
+          No answer. Open a second tab of this app to measure a real round-trip.
         </div>
       )}
     </div>

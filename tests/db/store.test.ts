@@ -138,6 +138,30 @@ describe("Store", () => {
     expect(store.getCinemaState("other")).toBeNull();
   });
 
+  it("persists the chosen movie and keeps it across later play/pause actions", () => {
+    const sessionId = "s1";
+    store.createSession(sessionId, "C1", "active", Date.now() + 1000);
+
+    const movie = { id: 550, title: "Fight Club", year: 1999 };
+    // Selection/start event carries the movie.
+    store.upsertCinemaState(sessionId, true, 0, JSON.stringify(movie));
+    let state = store.getSessionState(sessionId);
+    expect(state?.cinema?.movie).toEqual(movie);
+
+    // A later pause/seek with no movie must NOT erase the selection.
+    store.upsertCinemaState(sessionId, false, 30);
+    state = store.getSessionState(sessionId);
+    expect(state?.cinema?.playing).toBe(false);
+    expect(state?.cinema?.position).toBe(30);
+    expect(state?.cinema?.movie).toEqual(movie);
+
+    // A NEW selection replaces the old one.
+    const sequel = { id: 551, title: "Fight Club 2", year: 2003 };
+    store.upsertCinemaState(sessionId, true, 5, JSON.stringify(sequel));
+    state = store.getSessionState(sessionId);
+    expect(state?.cinema?.movie).toEqual(sequel);
+  });
+
   it("should include cinema in session state", () => {
     const sessionId = "s1";
     store.createSession(sessionId, "C1", "active", Date.now() + 1000);

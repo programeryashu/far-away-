@@ -23,6 +23,11 @@ interface ChatBoxProps {
    * peerId, never by display name — two peers may share a name.
    */
   myPeerId: string;
+  /**
+   * Fired when the user starts a conversation while the peer is away, so the
+   * parent can surface the join-code invitation.
+   */
+  onActivityStarted?: (activity: string) => void;
 }
 
 interface Message {
@@ -48,7 +53,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   nameB,
   connection,
   hasPeer,
-  myPeerId
+  myPeerId,
+  onActivityStarted
 }) => {
   // This tab is one of the two people; the connection knows which side is
   // mine (tab side locally, server role in a session). Messages from my own
@@ -135,6 +141,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       sender: ownName,
       text: inputText
     });
+
+    if (!hasPeer) onActivityStarted?.('a conversation');
 
     // Delivered once the transport has accepted it. In a session the server
     // ack swaps the local id for the server id; solo local mode falls back to

@@ -269,6 +269,26 @@ describe("payload limits (enforced on both sides by the same schemas)", () => {
     expect(parseClientEnvelope(frame("cinema", { playing: true, position: -1 }))).toBeNull();
   });
 
+  it("accepts a selected movie on the cinema start event and rejects malformed ones", () => {
+    expect(
+      parseClientEnvelope(
+        frame("cinema", {
+          playing: true,
+          position: 0,
+          movie: { id: 550, title: "Fight Club", year: 1999, runtime: 139 },
+        }),
+      ),
+    ).not.toBeNull();
+    expect(
+      parseClientEnvelope(frame("cinema", { playing: true, position: 0, movie: { id: -5, title: "X" } })),
+    ).toBeNull();
+    expect(
+      parseClientEnvelope(frame("cinema", { playing: true, position: 0, movie: { id: 1, title: "" } })),
+    ).toBeNull();
+    // Later play/pause events may omit the movie entirely.
+    expect(parseClientEnvelope(frame("cinema", { playing: false, position: 20 }))).not.toBeNull();
+  });
+
   it("rejects cities with out-of-range or oversize fields", () => {
     expect(
       parseClientEnvelope(frame("identity-update", { displayName: "A", city: { ...validCity, lat: 91 } })),

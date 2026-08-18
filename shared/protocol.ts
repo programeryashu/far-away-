@@ -96,10 +96,31 @@ export const PingPayloadSchema = z.object({
 });
 export type PingPayload = z.infer<typeof PingPayloadSchema>;
 
+/**
+ * The movie two people chose to watch together (Watch 2.0). Only normalized
+ * metadata travels — never a TMDB key, session secret, or full upstream
+ * response. Availability is informational and derived client-side per region.
+ */
+export const SelectedMovieSchema = z.object({
+  id: z.number().int().positive(),
+  title: z.string().min(1).max(200),
+  year: z.number().int().min(1888).max(2100).nullable().optional(),
+  runtime: z.number().int().min(0).max(600).nullable().optional(),
+  overview: z.string().max(2000).nullable().optional(),
+  poster: z.string().max(500).nullable().optional(),
+  backdrop: z.string().max(500).nullable().optional(),
+});
+export type SelectedMovie = z.infer<typeof SelectedMovieSchema>;
+
 export const CinemaPayloadSchema = z.object({
   playing: z.boolean(),
   /** Media position in seconds when the action was taken. */
   position: z.number().min(0).max(MAX_MEDIA_SECONDS),
+  /**
+   * The chosen movie. Carried by the selection/start event; later
+   * play/pause/seek events omit it and the server keeps the stored movie.
+   */
+  movie: SelectedMovieSchema.optional(),
 });
 export type CinemaPayload = z.infer<typeof CinemaPayloadSchema>;
 
@@ -269,6 +290,8 @@ export const StateCinemaSchema = z.object({
   session_id: z.string(),
   playing: z.boolean(),
   position: z.number().min(0).max(MAX_MEDIA_SECONDS),
+  /** The movie chosen together, if any — a fresh joiner inherits it. */
+  movie: SelectedMovieSchema.nullable().optional(),
   updated_at: z.number(),
 });
 export type StateCinema = z.infer<typeof StateCinemaSchema>;

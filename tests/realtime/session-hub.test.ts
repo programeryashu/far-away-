@@ -190,7 +190,59 @@ describe("SessionHub", () => {
     expect(sent.event).toBe("cinema");
     expect(sent.payload).toEqual({ playing: true, position: 0 });
     // Play/pause AND position persist for the snapshot a fresh joiner receives.
-    expect(mockStore.upsertCinemaState).toHaveBeenCalledWith("s1", true, 0);
+    expect(mockStore.upsertCinemaState).toHaveBeenCalledWith("s1", true, 0, "");
+  });
+
+  it("persists the chosen movie with the start event and omits it on later actions", () => {
+    const socket1 = new MockSocket();
+    const socket2 = new MockSocket();
+    hub.addConnection("s1", "p1", socket1 as unknown as WebSocket);
+    hub.addConnection("s1", "p2", socket2 as unknown as WebSocket);
+
+    vi.clearAllMocks();
+    const movie = { id: 550, title: "Fight Club", year: 1999 };
+    socket1.emit(
+      "message",
+      Buffer.from(
+        JSON.stringify({
+          version: 1,
+          sessionId: "s1",
+          peerId: "p1",
+          seq: 0,
+          timestamp: 123,
+          event: "cinema",
+          payload: { playing: true, position: 0, movie },
+        }),
+      ),
+    );
+
+    // The start event persists the movie and relays it to the peer.
+    expect(mockStore.upsertCinemaState).toHaveBeenCalledWith(
+      "s1",
+      true,
+      0,
+      JSON.stringify(movie),
+    );
+    const sent = JSON.parse(socket2.send.mock.calls[0][0]);
+    expect(sent.payload.movie).toEqual(movie);
+
+    // A later pause omits the movie — the stored selection must survive.
+    vi.clearAllMocks();
+    socket1.emit(
+      "message",
+      Buffer.from(
+        JSON.stringify({
+          version: 1,
+          sessionId: "s1",
+          peerId: "p1",
+          seq: 0,
+          timestamp: 124,
+          event: "cinema",
+          payload: { playing: false, position: 20 },
+        }),
+      ),
+    );
+    expect(mockStore.upsertCinemaState).toHaveBeenCalledWith("s1", false, 20, "");
   });
 
   it("should reject an invalid cinema payload", () => {
@@ -389,6 +441,48 @@ describe("SessionHub", () => {
     const sent = JSON.parse(socket.send.mock.calls[0][0]);
     expect(sent.event).toBe("state");
     expect(sent.payload.snapshotSeq).toBe(9);
+  });
+
+  it("snapshot carries the chosen movie to a fresh joiner (no replay needed)", () => {
+    const socket = new MockSocket();
+    hub.addConnection("s1", "p1", socket as unknown as WebSocket);
+    const movie = { id: 550, title: "Fight Club", year: 1999, runtime: 139 };
+    mockStore.getSessionState.mockReturnValue({
+      session: { id: "s1", code: "C1", status: "active", created_at: 1, expires_at: 9999, closed_at: null },
+      peers: [],
+      messages: [],
+      canvas: null,
+      timer: null,
+      cinema: {
+        session_id: "s1",
+        playing: true,
+        position: 30,
+        movie,
+        updated_at: 123,
+      },
+    });
+    mockStore.getLatestEventSeq.mockReturnValue(9);
+
+    vi.clearAllMocks();
+    socket.emit(
+      "message",
+      Buffer.from(
+        JSON.stringify({
+          version: 1,
+          sessionId: "s1",
+          peerId: "p1",
+          seq: 0,
+          timestamp: 123,
+          event: "state-request",
+          payload: { afterSeq: 0 },
+        }),
+      ),
+    );
+
+    const sent = JSON.parse(socket.send.mock.calls[0][0]);
+    expect(sent.event).toBe("state");
+    expect(sent.payload.cinema.movie).toEqual(movie);
+    expect(parseEnvelope(sent)).not.toBeNull();
   });
 
   it("sends nothing to a client that is fully caught up", () => {

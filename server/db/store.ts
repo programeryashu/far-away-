@@ -246,13 +246,21 @@ export class Store {
   // Cinema methods — the shared watch's state is play/pause plus the media
   // position, persisted so a fresh joiner inherits it from the authoritative
   // snapshot (the event log alone cannot restore it for an afterSeq=0 client).
-  upsertCinemaState(sessionId: string, playing: boolean, position: number) {
+  /**
+   * Persist the shared watch's play/pause + position, and the chosen movie
+   * when the payload carries one. An empty/absent movie keeps the previously
+   * stored movie (pause/seek events must not erase the selection).
+   */
+  upsertCinemaState(sessionId: string, playing: boolean, position: number, movieJson = "") {
     this.db
       .prepare(
-        "INSERT INTO cinema_state (session_id, playing, position, updated_at) VALUES (?, ?, ?, ?) " +
-          "ON CONFLICT(session_id) DO UPDATE SET playing = excluded.playing, position = excluded.position, updated_at = excluded.updated_at",
+        "INSERT INTO cinema_state (session_id, playing, position, movie_json, updated_at) VALUES (?, ?, ?, ?, ?) " +
+          "ON CONFLICT(session_id) DO UPDATE SET " +
+          "playing = excluded.playing, position = excluded.position, " +
+          "movie_json = CASE WHEN excluded.movie_json = '' THEN movie_json ELSE excluded.movie_json END, " +
+          "updated_at = excluded.updated_at",
       )
-      .run(sessionId, playing ? 1 : 0, position, Date.now());
+      .run(sessionId, playing ? 1 : 0, position, movieJson, Date.now());
   }
 
   getCinemaState(sessionId: string): CinemaState | null {
@@ -260,18 +268,31 @@ export class Store {
     // playing so the normalization below is intentional, then mapped to the
     // boolean the schema and the rest of the app expect.
     const row = this.db
-      .prepare("SELECT session_id, playing, position, updated_at FROM cinema_state WHERE session_id = ?")
+      .prepare("SELECT session_id, playing, position, movie_json, updated_at FROM cinema_state WHERE session_id = ?")
       .get(sessionId) as unknown as
-      | { session_id: string; playing: number; position: number; updated_at: number }
+      | { session_id: string; playing: number; position: number; movie_json: string; updated_at: number }
       | undefined;
-    return row
-      ? {
-          session_id: row.session_id,
-          playing: row.playing === 1,
-          position: row.position,
-          updated_at: row.updated_at,
+    if (!row) return null;
+    let movie: CinemaState["movie"] = null;
+    if (row.movie_json) {
+      try {
+        const parsed = JSON.parse(row.movie_json) as unknown;
+        // The stored movie is trusted (it passed protocol validation before
+        // persistence), so a light shape check is enough here.
+        if (parsed && typeof parsed === "object" && typeof (parsed as { id?: unknown }).id === "number") {
+          movie = parsed as CinemaState["movie"];
         }
-      : null;
+      } catch {
+        movie = null;
+      }
+    }
+    return {
+      session_id: row.session_id,
+      playing: row.playing === 1,
+      position: row.position,
+      movie,
+      updated_at: row.updated_at,
+    };
   }
 
   // Identity

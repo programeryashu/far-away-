@@ -101,7 +101,15 @@ AI_API_KEY=             # never commit; server-side only
 AI_BASE_URL=https://api.openai.com/v1
 ```
 
-The API key never enters the browser bundle.
+Watch (TMDB) is optional too — discovery, metadata, and regional availability only. Without a key the watch APIs answer "unconfigured" and the UI says search is unavailable:
+
+```
+TMDB_API_KEY=           # never commit; server-side only
+TMDB_BASE_URL=https://api.themoviedb.org/3
+TMDB_IMAGE_URL=https://image.tmdb.org/t/p
+```
+
+The API keys never enter the browser bundle.
 
 ## 🚀 Production deployment
 

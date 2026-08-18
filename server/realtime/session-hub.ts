@@ -221,11 +221,13 @@ export class SessionHub {
         if (seq === null) break;
         // Persist play/pause plus the media position so a fresh joiner
         // (afterSeq 0, who never replays the event) inherits the exact
-        // playback point from the state snapshot.
+        // playback point from the state snapshot. The chosen movie rides on
+        // the selection/start event; later actions keep the stored movie.
         this.fastify.store.upsertCinemaState(
           record.sessionId,
           envelope.payload.playing,
           envelope.payload.position,
+          envelope.payload.movie ? JSON.stringify(envelope.payload.movie) : "",
         );
         // Cinema is the one sequenced event broadcast to the sender too: the
         // sender otherwise never advances past its own event seq, so the

@@ -83,9 +83,17 @@ export class RealtimeClient {
     const url =
       `${protocol}//${window.location.host}/ws?sessionId=${this.sessionId}` +
       `&peerId=${this.peerId}&token=${encodeURIComponent(this.token)}`;
-    this.ws = new WebSocket(url);
+    // Every handler checks that its socket is still the live one: a stale
+    // socket (e.g. one closed while still CONNECTING by an intentional
+    // disconnect) must never clobber the current socket's reference, deliver
+    // its messages, or schedule a reconnect. Without this guard, that late
+    // close event (which browsers report as code 1006) would null the newer
+    // socket and open a duplicate connection after the reconnect backoff.
+    const socket = new WebSocket(url);
+    this.ws = socket;
 
-    this.ws.onopen = () => {
+    socket.onopen = () => {
+      if (this.ws !== socket) return;
       this.setStatus('connected');
       this.reconnectAttempts = 0;
       // Catch-up first, then queued user actions: the server processes the
@@ -95,7 +103,8 @@ export class RealtimeClient {
       this.flushPending();
     };
 
-    this.ws.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (this.ws !== socket) return;
       let data: unknown;
       try {
         data = JSON.parse(event.data);
@@ -144,7 +153,10 @@ export class RealtimeClient {
       this.requestCatchUp();
     };
 
-    this.ws.onclose = (event) => {
+    socket.onclose = (event) => {
+      // A late close from a superseded socket (closed while CONNECTING by an
+      // intentional disconnect) must not touch the live socket or reconnect.
+      if (this.ws !== socket) return;
       this.ws = null;
       // Anything buffered while the socket was up will be re-requested via
       // the last applied seq on the next connection.
@@ -164,7 +176,7 @@ export class RealtimeClient {
 
     // Every error is followed by a close event; letting onclose drive
     // reconnection avoids scheduling duplicate reconnect timers.
-    this.ws.onerror = () => {
+    socket.onerror = () => {
       /* handled by onclose */
     };
   }

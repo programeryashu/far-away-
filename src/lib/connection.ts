@@ -146,9 +146,11 @@ export class LocalConnection implements Connection {
         }
         break;
       }
-      case 'cinema':
-        this.sync.sendCinema((payload as CinemaPayload).playing, (payload as CinemaPayload).position);
+      case 'cinema': {
+        const cinema = payload as CinemaPayload;
+        this.sync.sendCinema(cinema.playing, cinema.position, cinema.movie);
         break;
+      }
       case 'timer':
         this.sync.sendTimer(payload as TimerPayload);
         break;
@@ -216,7 +218,7 @@ export class LocalConnection implements Connection {
         this.emit(
           makeEnvelope({
             event: CINEMA_EVENT,
-            payload: { playing: msg.playing, position: msg.position },
+            payload: { playing: msg.playing, position: msg.position, ...(msg.movie ? { movie: msg.movie } : {}) },
           }),
         );
         break;

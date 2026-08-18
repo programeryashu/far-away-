@@ -8,6 +8,7 @@ import { envSchema, type EnvConfig } from "./config.js";
 import { healthRoutes } from "./routes/health.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { sharedMomentRoutes } from "./routes/shared-moment.js";
+import { watchRoutes } from "./routes/watch.js";
 import { Store } from "./db/store.js";
 import { SessionHub } from "./realtime/session-hub.js";
 import { peerTokenMatches } from "./security/peer-token.js";
@@ -57,6 +58,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await fastify.register(healthRoutes);
   await fastify.register(sessionRoutes);
   await fastify.register(sharedMomentRoutes);
+  await fastify.register(watchRoutes);
 
   fastify.get("/ws", { websocket: true }, (socket, request) => {
     const query = z

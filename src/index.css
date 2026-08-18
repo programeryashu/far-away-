@@ -669,6 +669,217 @@ label {
   color: var(--accent);
 }
 
+/* Watch discovery — one compact search surface, no card grid. */
+.watch-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  padding: 4px 6px 4px 10px;
+  background: var(--surface-raised);
+}
+
+.watch-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: var(--text-label-size);
+  padding: 6px 0;
+}
+
+.watch-search input::placeholder {
+  color: var(--text-muted);
+}
+
+.watch-resume {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-raised);
+}
+
+.watch-resume-poster {
+  width: 44px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass);
+  flex-shrink: 0;
+  background: #000;
+}
+
+.watch-resume-poster--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.watch-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.watch-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.watch-row:hover,
+.watch-row:focus-visible {
+  background: var(--surface-hover);
+  border-color: var(--border-glass);
+}
+
+.watch-row--pick {
+  border-color: rgba(217, 164, 65, 0.35);
+  background: rgba(217, 164, 65, 0.06);
+}
+
+.watch-row-art {
+  width: 34px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass);
+  flex-shrink: 0;
+  background: #000;
+}
+
+.watch-row-art--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.watch-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-label-size);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.watch-row-meta {
+  font-size: var(--text-meta-size);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.watch-row-pick {
+  font-size: var(--text-meta-size);
+  color: var(--accent);
+  border: 1px solid rgba(217, 164, 65, 0.35);
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+/* Watch movie detail — title first, overview, availability as quiet rows. */
+.watch-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.watch-detail-backdrop {
+  width: 100%;
+  max-height: 180px;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-glass);
+}
+
+.watch-detail-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.watch-detail-title {
+  font-size: var(--text-subheading-size);
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.watch-detail-overview {
+  font-size: var(--text-label-size);
+  color: var(--text-secondary);
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.watch-avail {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-glass);
+  font-size: var(--text-label-size);
+}
+
+.watch-avail:last-of-type {
+  border-bottom: none;
+}
+
+.watch-avail-country {
+  color: var(--text-secondary);
+}
+
+.watch-avail-yes {
+  color: var(--text-primary);
+  text-align: right;
+}
+
+.watch-avail-no {
+  color: var(--text-muted);
+  text-align: right;
+}
+
+@media (max-width: 560px) {
+  .watch-row {
+    gap: var(--space-2);
+    padding: var(--space-2);
+  }
+  .watch-row-meta {
+    display: none;
+  }
+  .watch-resume {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
 /* Shared activity log — one quiet mono list inside a .group */
 .activity-log {
   display: flex;
@@ -891,6 +1102,90 @@ label {
   padding: var(--space-5) 2px 0;
 }
 
+/* Session join code — always visible while a session is active, so the
+   invitee is never told to join "via code" without seeing the code. */
+.session-code-strip {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 14px 24px 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.session-code {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Session invitation — one quiet surface, not a SaaS card. The code is the
+   hero; the actions stay calm (copy / join through the existing flow). */
+.invite-prompt {
+  position: relative;
+  width: 100%;
+  margin-top: var(--space-3);
+}
+.invite-prompt-dismiss {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  min-width: 32px;
+}
+.invite-prompt-dismiss:hover {
+  color: var(--text-primary);
+}
+.invite-prompt-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 4px;
+}
+.invite-prompt-sub {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0 0 14px;
+}
+.invite-prompt-actions {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.invite-code-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.invite-code {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.invite-prompt-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
 /* Reduced motion — gentle cross-fades, no motion */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -914,6 +1209,23 @@ label {
   }
   .glass-panel {
     padding: var(--space-4);
+  }
+  .session-code-strip {
+    padding: 12px 16px 0;
+  }
+  .invite-prompt-actions {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .invite-prompt-buttons {
+    margin-left: 0;
+  }
+  .invite-prompt-buttons .btn {
+    min-height: 44px;
+  }
+  .session-code-strip .btn {
+    min-height: 44px;
   }
   /* Touch-first: every tap target at least 44px tall. */
   .btn,

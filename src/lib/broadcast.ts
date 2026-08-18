@@ -6,6 +6,8 @@
 // and the connection (cities) travel across the channel. When no peer tab is
 // present the UI keeps its built-in simulation as an offline fallback.
 
+import type { SelectedMovie } from '../../shared/protocol';
+
 export type Side = 'host' | 'remote';
 
 export interface CitySnapshot {
@@ -51,7 +53,7 @@ export type SyncMessage =
   | { type: 'canvas-stroke'; payload: StrokePayload }
   | { type: 'canvas-clear' }
   | { type: 'canvas-drawing'; active: boolean }
-  | { type: 'cinema'; playing: boolean; position: number }
+  | { type: 'cinema'; playing: boolean; position: number; movie?: SelectedMovie }
   | { type: 'timer'; payload: TimerPayload }
   | { type: 'ping'; ts: number }
   | { type: 'pong'; ts: number };
@@ -177,8 +179,8 @@ export class OrbitSync {
   sendCanvasDrawing(active: boolean): void {
     this.send({ type: 'canvas-drawing', active });
   }
-  sendCinema(playing: boolean, position: number): void {
-    this.send({ type: 'cinema', playing, position });
+  sendCinema(playing: boolean, position: number, movie?: SelectedMovie): void {
+    this.send({ type: 'cinema', playing, position, ...(movie ? { movie } : {}) });
   }
   sendTimer(payload: TimerPayload): void {
     this.send({ type: 'timer', payload });

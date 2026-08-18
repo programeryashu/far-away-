@@ -201,4 +201,17 @@ describe("parseCinemaState", () => {
   it("returns null when there is no persisted cinema", () => {
     expect(parseCinemaState(null)).toBeNull();
   });
+
+  it("carries the chosen movie so a fresh joiner inherits the watch selection", () => {
+    const row = {
+      session_id: "s1",
+      playing: true,
+      position: 30,
+      updated_at: Date.now() - 5000,
+      movie: { id: 550, title: "Fight Club", year: 1999, runtime: 139 },
+    };
+    const parsed = parseCinemaState(row)!;
+    expect(parsed.movie).toEqual({ id: 550, title: "Fight Club", year: 1999, runtime: 139 });
+    expect(parsed.playing).toBe(true);
+  });
 });

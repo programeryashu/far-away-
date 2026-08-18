@@ -13,6 +13,14 @@ export const envSchema = {
     AI_MODEL: { type: "string", default: "" },
     AI_API_KEY: { type: "string", default: "" },
     AI_BASE_URL: { type: "string", default: "https://api.openai.com/v1" },
+
+    /* Watch metadata (TMDB, optional). The key lives ONLY here, server-side:
+       it never reaches the browser bundle or any client payload. Without it
+       the watch APIs answer "unconfigured" and the UI says search is
+       unavailable — no fabricated results. */
+    TMDB_API_KEY: { type: "string", default: "" },
+    TMDB_BASE_URL: { type: "string", default: "https://api.themoviedb.org/3" },
+    TMDB_IMAGE_URL: { type: "string", default: "https://image.tmdb.org/t/p" },
   },
 } as const;
 
@@ -26,4 +34,7 @@ export interface EnvConfig {
   AI_MODEL: string;
   AI_API_KEY: string;
   AI_BASE_URL: string;
+  TMDB_API_KEY: string;
+  TMDB_BASE_URL: string;
+  TMDB_IMAGE_URL: string;
 }

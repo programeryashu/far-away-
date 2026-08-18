@@ -269,6 +269,37 @@ describe("RealtimeClient", () => {
     expect(seqs).toEqual([]); // 3 < 5 — no regression
   });
 
+  it("ignores a late close from a superseded socket (no duplicate connection)", () => {
+    // Reproduces the duplicate-connection bug: a socket closed while still
+    // CONNECTING (an intentional disconnect, e.g. StrictMode's cleanup) fires
+    // its close event late — browsers report it as 1006. Before the fix that
+    // handler nulled the NEW socket and scheduled a reconnect, opening a
+    // second live connection after the backoff.
+    client.connect();
+    const socketA = FakeWebSocket.instances[0];
+    expect(socketA.readyState).toBe(FakeWebSocket.CONNECTING);
+
+    client.disconnect();
+    expect(client.getStatus()).toBe("disconnected");
+
+    client.connect();
+    const socketB = FakeWebSocket.instances[1];
+    expect(FakeWebSocket.instances).toHaveLength(2);
+
+    // The aborted socket's close arrives after socket B is live.
+    socketA.onclose?.({ code: 1006, reason: "" });
+
+    // No reconnect may be scheduled, and the live socket is untouched.
+    vi.advanceTimersByTime(60_000);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+
+    // The current socket still opens and works normally.
+    socketB.open();
+    expect(client.getStatus()).toBe("connected");
+    client.send("ping", { ts: 1 });
+    expect(sentEvents(socketB).some((s) => s.event === "ping")).toBe(true);
+  });
+
   it("queues a send made while connecting and flushes it exactly once on open", () => {
     // Reproduces the lost-first-action: a timer/chat sent immediately around
     // connection establishment, before the socket reaches OPEN.

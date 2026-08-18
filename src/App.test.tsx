@@ -492,3 +492,135 @@ describe('App session state machine', () => {
     expect(screen.getByText(/shared focus session started on your device/i)).toBeTruthy();
   });
 });
+
+describe('Session invite / join-code UX', () => {
+  const SID = 'sess-77f0c1';
+  const TOKEN_A = 'tok-secret-a1';
+
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    localStorage.clear();
+    window.history.replaceState(null, '', '/');
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    api.createSession.mockReset();
+    api.joinSession.mockReset();
+    api.joinSessionByCode.mockReset();
+    api.leaveSession.mockReset();
+    momentApi.requestMomentRecommendation.mockImplementation(() => new Promise<never>(() => {}));
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    momentApi.requestMomentRecommendation.mockReset();
+  });
+
+  const createSessionAsA = async () => {
+    api.createSession.mockResolvedValue({ id: SID, code: 'ABC123', expiresAt: Date.now() + 3_600_000 });
+    api.joinSession.mockResolvedValue({ peerId: 'p1', role: 'a', token: TOKEN_A });
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /copy shareable connection link/i }));
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+    act(() => lastWs().open());
+    await waitFor(() =>
+      expect(screen.getByText('Connected · waiting for your person')).toBeTruthy(),
+    );
+  };
+
+  it('shows the join code whenever a session is active', async () => {
+    await createSessionAsA();
+    // The code comes from the persisted session, not a fresh generation.
+    expect(screen.getAllByText('ABC123').length).toBeGreaterThan(0);
+    expect(screen.getByLabelText('Session join code')).toBeTruthy();
+    // The session UUID and peer token never surface in the UI.
+    const text = document.body.textContent ?? '';
+    expect(text).not.toContain(SID);
+    expect(text).not.toContain(TOKEN_A);
+  });
+
+  it('shows the code invitation when an activity is started while the peer is away', async () => {
+    await createSessionAsA();
+
+    // Peer is NOT connected: starting the timer surfaces the invitation.
+    fireEvent.click(screen.getByRole('button', { name: 'Open Deep Space Coffee' }));
+    fireEvent.click(screen.getByRole('button', { name: /start/i }));
+    expect(screen.getByLabelText('Session invitation')).toBeTruthy();
+    expect(screen.getByText('You started a shared timer.')).toBeTruthy();
+    expect(screen.getAllByText('ABC123').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: /copy code/i }).length).toBeGreaterThan(0);
+
+    // Still never the UUID or the token.
+    const text = document.body.textContent ?? '';
+    expect(text).not.toContain(SID);
+    expect(text).not.toContain(TOKEN_A);
+  });
+
+  it('does not show an invitation when the peer is already online (normal sync instead)', async () => {
+    await createSessionAsA();
+    act(() => lastWs().emit(env('peer-joined', { peerId: 'p2', displayName: 'Kimi', cityJson })));
+    await waitFor(() => expect(screen.getByText('Connected · your person is online')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Deep Space Coffee' }));
+    fireEvent.click(screen.getByRole('button', { name: /start/i }));
+    expect(screen.queryByLabelText('Session invitation')).toBeNull();
+    // The activity still went through the realtime transport.
+    expect(sentEvents(lastWs()).some((s) => s.event === 'timer' && s.payload.action === 'start')).toBe(true);
+  });
+
+  it('joins the existing session by code — no new session, no duplicate connection', async () => {
+    window.history.replaceState(null, '', '/?code=ABC123');
+    api.joinSessionByCode.mockResolvedValue({ sessionId: SID, peerId: 'p2', role: 'b', token: 'tok-b' });
+
+    render(<App />);
+    expect(screen.getByText("You've been invited to a live session")).toBeTruthy();
+    // The invite panel shows the code too.
+    expect(screen.getByLabelText('Join code ABC123')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /join session/i }));
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+    act(() => lastWs().open());
+    await waitFor(() =>
+      expect(screen.getByText('Connected · waiting for your person')).toBeTruthy(),
+    );
+
+    // Joined the existing session via the code — never created a new one.
+    expect(api.joinSessionByCode).toHaveBeenCalledWith('ABC123', expect.any(String), expect.any(Object));
+    expect(api.createSession).not.toHaveBeenCalled();
+    // One connection, not two.
+    expect(FakeWebSocket.instances.length).toBe(1);
+    // The code is persisted so a reload reconnects to the same session.
+    expect(localStorage.getItem('orbit.session')).toContain('ABC123');
+  });
+
+  it('stays local from an open invite without creating any connection', () => {
+    window.history.replaceState(null, '', '/?code=ABC123');
+    render(<App />);
+    expect(screen.getByText("You've been invited to a live session")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /stay local/i }));
+    expect(screen.getByText('Local')).toBeTruthy();
+    expect(FakeWebSocket.instances.length).toBe(0);
+    expect(window.location.search).toBe('');
+  });
+
+  it('preserves the same session code across a reload (no regeneration)', async () => {
+    await createSessionAsA();
+    expect(screen.getAllByText('ABC123').length).toBeGreaterThan(0);
+    cleanup();
+    FakeWebSocket.instances = [];
+    api.createSession.mockClear();
+    api.joinSession.mockClear();
+    api.joinSessionByCode.mockClear();
+
+    render(<App />);
+    // Restored from the persisted session — the same code, no new session.
+    expect(screen.getAllByText('ABC123').length).toBeGreaterThan(0);
+    expect(api.createSession).not.toHaveBeenCalled();
+    expect(api.joinSession).not.toHaveBeenCalled();
+    act(() => lastWs().open());
+    await waitFor(() =>
+      expect(screen.getByText('Connected · waiting for your person')).toBeTruthy(),
+    );
+  });
+});

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LocationSelector } from './components/LocationSelector';
 import { TimezoneSync } from './components/TimezoneSync';
 import { LiveWindow } from './components/LiveWindow';
@@ -6,7 +6,8 @@ import { PingMeter } from './components/PingMeter';
 import { ActivityFinder, type ActivityLaunch } from './components/ActivityFinder';
 import { SharedMoment, type MomentLaunch } from './components/SharedMoment';
 import { ChatBox } from './components/ChatBox';
-import { Heart, Share2, Check, LogOut } from 'lucide-react';
+import { SessionInvitePrompt } from './components/SessionInvitePrompt';
+import { Heart, Share2, Check, Copy, LogOut } from 'lucide-react';
 import { FALLBACK_CITIES, type CityData } from './lib/cities';
 import { buildShareUrl, isValidConnectionState, parseShareUrl, type ConnectionState } from './lib/share';
 import { OrbitSync } from './lib/broadcast';
@@ -20,6 +21,7 @@ import {
   leaveSession
 } from './lib/api';
 import { identityFromParts, otherPeers, peerIdentity, type ServerPeer } from './lib/reconcile';
+import { buildMomentFacts } from './lib/moment';
 
 const STORAGE_KEY = 'faraway.connection';
 
@@ -105,7 +107,11 @@ function App() {
   const [userNameB, setUserNameB] = useState(initial.b.name);
   const [selectedCityB, setSelectedCityB] = useState<CityData>(initial.b.city);
   const [copied, setCopied] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
   const [manualCopyUrl, setManualCopyUrl] = useState<string | null>(null);
+  // Activity started while the peer is away — one reusable invitation surface
+  // (with the join code) instead of an unreachable "join via code" hint.
+  const [invitePrompt, setInvitePrompt] = useState<{ activity: string; nonce: number } | null>(null);
   // First-run hero: inline "Join with code" form state.
   const [heroJoinOpen, setHeroJoinOpen] = useState(false);
   const [heroCode, setHeroCode] = useState('');
@@ -119,6 +125,21 @@ function App() {
   // BroadcastChannel is always available when the UI is in local mode.
   const [sync] = useState(() => new OrbitSync());
   const [hasRemotePeer, setHasRemotePeer] = useState(false);
+  // Mirror for callbacks that must read presence without re-subscribing.
+  const hasRemotePeerRef = useRef(hasRemotePeer);
+  useEffect(() => {
+    hasRemotePeerRef.current = hasRemotePeer;
+  }, [hasRemotePeer]);
+
+  // The shared-time window today (minutes) — the runtime ceiling Watch's
+  // "Pick something for us" filters against.
+  const sharedWindowMinutes = useMemo(() => {
+    try {
+      return buildMomentFacts(selectedCityA, selectedCityB, new Date()).context.bestWindow.minutes;
+    } catch {
+      return 60;
+    }
+  }, [selectedCityA, selectedCityB]);
 
   const [urlSessionId] = useState(() => parseSessionParam(window.location.search));
   const [urlCode] = useState(() => parseCodeParam(window.location.search));
@@ -262,7 +283,12 @@ function App() {
   useEffect(() => {
     connectionRef.current = connection;
 
-    const unsubPeer = connection.onPeerChange((hasPeer) => setHasRemotePeer(hasPeer));
+    const unsubPeer = connection.onPeerChange((hasPeer) => {
+      setHasRemotePeer(hasPeer);
+      // The invitation disappears the moment the peer actually joins: the
+      // normal realtime sync takes over from there.
+      if (hasPeer) setInvitePrompt(null);
+    });
 
     if (connection.mode === 'remote') {
       const unsubStatus = connection.onStatus((status) => {
@@ -453,19 +479,60 @@ function App() {
     }
   };
 
+  // An activity was started. When the peer is away the session code is the
+  // only way they can get here, so surface the one invitation surface — never
+  // an opaque "join via code" hint.
+  const handleActivityStarted = useCallback((activity: string) => {
+    const s = sessionRef.current;
+    if (!s?.code) return;
+    if (hasRemotePeerRef.current) return; // peer present — normal realtime sync
+    setInvitePrompt({ activity, nonce: Date.now() });
+  }, []);
+
+  // Copy just the session code, with its own quiet feedback.
+  const handleCopyCode = async () => {
+    const s = sessionRef.current;
+    if (!s?.code) return;
+    let ok = false;
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(s.code);
+        ok = true;
+      }
+    } catch {
+      ok = false;
+    }
+    if (!ok) ok = copyFallback(s.code);
+    if (ok) {
+      setCodeCopied(true);
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = window.setTimeout(() => setCodeCopied(false), 2000);
+    }
+  };
+
   // Shared Moment's Start Together: chat scrolls to the conversation, every
   // other activity runs through the existing realtime system via ActivityFinder.
-  const handleMomentLaunch = useCallback((launch: MomentLaunch) => {
-    if (launch.type === 'chat') {
-      document.getElementById('chat-box')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      return;
-    }
-    setLaunchRequest({
-      type: launch.type,
-      durationMin: launch.durationMin,
-      nonce: Date.now()
-    });
-  }, []);
+  const handleMomentLaunch = useCallback(
+    (launch: MomentLaunch) => {
+      if (launch.type === 'chat') {
+        document.getElementById('chat-box')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+      handleActivityStarted(
+        launch.type === 'timer'
+          ? 'a shared timer'
+          : launch.type === 'cinema'
+            ? 'a shared watch'
+            : 'Canvas',
+      );
+      setLaunchRequest({
+        type: launch.type,
+        durationMin: launch.durationMin,
+        nonce: Date.now()
+      });
+    },
+    [handleActivityStarted],
+  );
 
   // Leave: stop the remote connection, clear session state, return to local
   // mode. Local names/cities and other app data are untouched.
@@ -496,7 +563,8 @@ function App() {
     // Back to the BroadcastChannel transport; the wiring effect stops the
     // old remote connection and starts this one.
     setConnection(createConnection(sync, null));
-    if (urlSessionId) window.history.replaceState(null, '', window.location.pathname);
+    setInvitePrompt(null);
+    if (urlSessionId || urlCode) window.history.replaceState(null, '', window.location.pathname);
   };
 
   // Calm, human status vocabulary. The transport may be a WebSocket —
@@ -571,6 +639,37 @@ function App() {
         </div>
       </header>
 
+      {/* The session code is always visible while a session is active — the
+          invitee is never told to join "via code" without being able to see
+          (and copy) the code. Survives reload because it comes from the
+          persisted session, never a fresh generation. */}
+      {session?.code && (
+        <div className="session-code-strip" role="region" aria-label="Session join code">
+          <span className="eyebrow">Join code</span>
+          <span className="session-code">{session.code}</span>
+          <button
+            type="button"
+            onClick={handleCopyCode}
+            className="btn btn-outline"
+            aria-label="Copy join code"
+            style={{ padding: '5px 10px', fontSize: '12px', gap: '5px' }}
+          >
+            {codeCopied ? <Check size={12} /> : <Copy size={12} />}
+            {codeCopied ? 'Copied' : 'Copy'}
+          </button>
+          {invitePrompt && (
+            <SessionInvitePrompt
+              mode="share"
+              starterName={myRole === 'b' ? userNameB || 'User B' : userNameA || 'User A'}
+              activity={invitePrompt.activity}
+              code={session.code}
+              inviteUrl={sessionShareUrl(session)}
+              onDismiss={() => setInvitePrompt(null)}
+            />
+          )}
+        </div>
+      )}
+
       {/* Manual-copy fallback when both clipboard paths fail */}
       {manualCopyUrl && (
         <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '8px 24px 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
@@ -619,7 +718,9 @@ function App() {
           </section>
         )}
 
-        {/* Invitee join panel */}
+        {/* Invitee join panel — the code is shown here too, and joining stays
+            on the existing secure join-by-code path. "Stay local" leaves the
+            invite without creating any connection. */}
         {sessionState === 'joining' &&
           (urlSessionId || urlCode) &&
           connection.mode === 'local' && (
@@ -628,16 +729,29 @@ function App() {
               You've been invited to a live session
             </h2>
             <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
-              Set your name and location in the <strong style={{ color: 'var(--text-primary)' }}>Person B</strong>{' '}
-              panel below — that is your identity in this session — then join. You will connect directly
-              to the other person over the shared channel.
+              Your person is waiting. Set your name and location in the{' '}
+              <strong style={{ color: 'var(--text-primary)' }}>Person B</strong> panel below — that
+              is your identity in this session — then join.
             </p>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={handleJoin} className="btn btn-primary" style={{ gap: '8px' }}>
-                Join Session
-              </button>
+            {urlCode ? (
+              <SessionInvitePrompt
+                mode="join"
+                starterName="Your person"
+                activity="a shared activity"
+                code={urlCode}
+                inviteUrl={window.location.href}
+                onJoin={handleJoin}
+              />
+            ) : (
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button onClick={handleJoin} className="btn btn-primary" style={{ gap: '8px' }}>
+                  Join session
+                </button>
+              </div>
+            )}
+            <div style={{ marginTop: '12px' }}>
               <button onClick={handleLeave} className="btn btn-outline">
-                Cancel
+                Stay local
               </button>
             </div>
           </section>
@@ -728,6 +842,10 @@ function App() {
             connection={connection}
             hasPeer={hasRemotePeer}
             launchRequest={launchRequest}
+            onActivityStarted={handleActivityStarted}
+            countryA={selectedCityA.country}
+            countryB={selectedCityB.country}
+            windowMinutes={sharedWindowMinutes}
           />
         </section>
 
@@ -748,6 +866,7 @@ function App() {
             connection={connection}
             hasPeer={hasRemotePeer}
             myPeerId={session?.peerId ?? ''}
+            onActivityStarted={handleActivityStarted}
           />
         </section>
 

@@ -53,6 +53,8 @@ export interface CinemaState {
   playing: boolean;
   /** Media position in seconds, stored alongside `updated_at`. */
   position: number;
+  /** The movie chosen together (Watch 2.0), parsed from `movie_json`. */
+  movie: import("../../shared/protocol.js").SelectedMovie | null;
   updated_at: number;
 }
 
@@ -173,6 +175,13 @@ export const migrations: Migration[] = [
     name: "peer_token_hash",
     sql: `
       ALTER TABLE peers ADD COLUMN token_hash TEXT NOT NULL DEFAULT '';
+    `,
+  },
+  {
+    id: 7,
+    name: "cinema_movie",
+    sql: `
+      ALTER TABLE cinema_state ADD COLUMN movie_json TEXT NOT NULL DEFAULT '';
     `,
   },
 ];

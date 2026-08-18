@@ -82,14 +82,15 @@ describe('SharedMoment', () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByText(/45-minute shared watch/)).toBeTruthy();
+    expect(screen.getByText(/45-minute watch/)).toBeTruthy();
     expect(screen.getByText(/A world apart — watch side by side/)).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: /start together/i }));
+    // A watch recommendation leads to the movie choice, not a raw player.
+    fireEvent.click(screen.getByRole('button', { name: /choose a movie/i }));
     expect(onLaunch).toHaveBeenCalledWith({ type: 'cinema', durationMin: 45 });
     // A started recommendation cannot be launched twice.
     expect(
-      (screen.getByRole('button', { name: /start together/i }) as HTMLButtonElement).disabled,
+      (screen.getByRole('button', { name: /choose a movie/i }) as HTMLButtonElement).disabled,
     ).toBe(true);
   });
 
@@ -101,8 +102,8 @@ describe('SharedMoment', () => {
     });
 
     // Same rules as the server: far apart + live overlap → cinema 45.
-    expect(screen.getByText(/45-minute shared watch/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /start together/i }));
+    expect(screen.getByText(/45-minute watch/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /choose a movie/i }));
     expect(onLaunch).toHaveBeenCalledWith({ type: 'cinema', durationMin: 45 });
   });
 

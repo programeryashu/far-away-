@@ -210,12 +210,19 @@ export const SharedMoment: React.FC<SharedMomentProps> = ({
               <div style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, color: 'var(--accent)' }}>
                 Best fit:{' '}
                 <span style={{ color: 'var(--text-primary)' }}>
-                  {rec.durationMinutes}-minute {label}
+                  {rec.activity === 'cinema'
+                    ? `${rec.durationMinutes}-minute watch`
+                    : `${rec.durationMinutes}-minute ${label}`}
                 </span>
               </div>
               <div style={{ fontSize: 'var(--text-label-size)', color: 'var(--text-secondary)' }}>
                 {rec.explanation}
               </div>
+              {rec.activity === 'cinema' && (
+                <div style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-muted)' }}>
+                  The movie choice is yours — pick something that fits the window, and playback runs on a safe demo clip.
+                </div>
+              )}
               <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
                 <button
                   onClick={handleStart}
@@ -224,7 +231,11 @@ export const SharedMoment: React.FC<SharedMomentProps> = ({
                   style={{ gap: '6px', padding: '8px 16px', fontSize: 'var(--text-label-size)' }}
                 >
                   <Play size={14} />
-                  {rec.activity === 'chat' ? 'Go to Chat' : 'Start Together'}
+                  {rec.activity === 'chat'
+                    ? 'Go to Chat'
+                    : rec.activity === 'cinema'
+                      ? 'Choose a movie'
+                      : 'Start Together'}
                 </button>
                 {started && (
                   <span style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-secondary)' }}>

@@ -140,5 +140,6 @@ export function parseCinemaState(cinema: ServerCinema | null): CinemaPayload | n
     );
     position += elapsed;
   }
-  return { playing: cinema.playing, position };
+  // The chosen movie, if the session picked one — a fresh joiner inherits it.
+  return { playing: cinema.playing, position, ...(cinema.movie ? { movie: cinema.movie } : {}) };
 }

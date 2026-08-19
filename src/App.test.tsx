@@ -224,6 +224,60 @@ describe('App session state machine', () => {
     await waitFor(() => expect(screen.getByText('Connected · waiting for your person')).toBeTruthy());
   });
 
+  it('applies peer identity from the state snapshot, not just peer-joined', async () => {
+    window.history.replaceState(null, '', '/?session=s1');
+    api.joinSession.mockResolvedValue({ peerId: 'p2', role: 'b' });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /join session/i }));
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+    act(() => lastWs().open());
+
+    // State snapshot carries the remote peer's identity directly — fresh
+    // joiners must see the peer name immediately without waiting for a
+    // peer-joined event.
+    act(() =>
+      lastWs().emit(
+        stateFrame({
+          peers: [
+            { id: 'p1', session_id: 's1', role: 'a', display_name: 'Yash', city_json: cityJson, joined_at: 1, last_seen: 1 },
+            { id: 'p2', session_id: 's1', role: 'b', display_name: 'Kim', city_json: cityJson, joined_at: 2, last_seen: 2 },
+          ],
+          snapshotSeq: 0,
+        }),
+      ),
+    );
+    // A's side (the peer) should show the name from the state snapshot.
+    await waitFor(() => expect(aNameInput().value).toBe('Yash'));
+    // B owns side B — their own panel is editable.
+    expect(bNameInput().disabled).toBe(false);
+  });
+
+  it('preserves peer identity across a reconnect (state snapshot restores names)', async () => {
+    localStorage.setItem(
+      'orbit.session',
+      JSON.stringify({ sessionId: 's1', peerId: 'p1', role: 'a', lastAppliedEventSeq: 3 }),
+    );
+    render(<App />);
+    act(() => lastWs().open());
+
+    // State snapshot after reconnect carries both peers' identities.
+    act(() =>
+      lastWs().emit(
+        stateFrame({
+          peers: [
+            { id: 'p1', session_id: 's1', role: 'a', display_name: 'Yash', city_json: cityJson, joined_at: 1, last_seen: 1 },
+            { id: 'p2', session_id: 's1', role: 'b', display_name: 'Kimi', city_json: cityJson, joined_at: 2, last_seen: 2 },
+          ],
+          snapshotSeq: 3,
+        }),
+      ),
+    );
+    // After reconnect, the state snapshot restores the peer's name.
+    await waitFor(() => expect(aNameInput().value).toBe('Yash'));
+    expect(bNameInput().value).toBe('Kimi');
+  });
+
   it('shows a friendly error for an invalid/expired invite and never raw server text', async () => {
     window.history.replaceState(null, '', '/?code=NOPE');
     api.joinSessionByCode.mockRejectedValue(new api.MockApiError('session not found', 404));

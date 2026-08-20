@@ -23,7 +23,7 @@
 
 **0:40–1:00 — Create + join**
 
-> "Device A creates a session." *(click Create a connection)* "Device B joins with the code — or the invite link." *(B types the code / opens the link)* "Both of us are now live in the same session, from two different cities."
+> "Device A creates a session." *(click Share with your person)* "Device B joins with the code — or the invite link." *(B types the code / opens the link)* "Both of us are now live in the same session, from two different cities."
 
 **1:00–1:20 — Shared Moment**
 

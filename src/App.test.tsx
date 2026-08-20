@@ -164,7 +164,7 @@ describe('App session state machine', () => {
     api.leaveSession.mockResolvedValue(undefined);
 
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: /copy shareable connection link/i }));
+    fireEvent.click(screen.getByRole('button', { name: /share session link with your person/i }));
 
     // Joining → connected once the socket opens.
     await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
@@ -323,7 +323,7 @@ describe('App session state machine', () => {
     api.createSession.mockRejectedValue(new api.MockApiError('Cannot reach the Orbit server', null));
 
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: /copy shareable connection link/i }));
+    fireEvent.click(screen.getByRole('button', { name: /share session link with your person/i }));
 
     await waitFor(() => expect(screen.getByText('Local')).toBeTruthy());
     expect(screen.getByText(/copy this link manually/i)).toBeTruthy();
@@ -495,7 +495,7 @@ describe('App session state machine', () => {
     api.joinSession.mockResolvedValue({ peerId: 'p1', role: 'a', token: 'tok-a' });
 
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: /copy shareable connection link/i }));
+    fireEvent.click(screen.getByRole('button', { name: /share session link with your person/i }));
     await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
     act(() => lastWs().open());
     await waitFor(() => expect(screen.getByText('Connected · waiting for your person')).toBeTruthy());
@@ -576,7 +576,7 @@ describe('Session invite / join-code UX', () => {
     api.createSession.mockResolvedValue({ id: SID, code: 'ABC123', expiresAt: Date.now() + 3_600_000 });
     api.joinSession.mockResolvedValue({ peerId: 'p1', role: 'a', token: TOKEN_A });
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: /copy shareable connection link/i }));
+    fireEvent.click(screen.getByRole('button', { name: /share session link with your person/i }));
     await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
     act(() => lastWs().open());
     await waitFor(() =>

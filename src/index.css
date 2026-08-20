@@ -1308,6 +1308,18 @@ label {
   }
 }
 
+/* Details/summary disclosure — quiet, no default marker */
+details > summary::-webkit-details-marker {
+  display: none;
+}
+details > summary::marker {
+  display: none;
+  content: '';
+}
+details[open] > summary span:first-child span {
+  transform: rotate(90deg);
+}
+
 /* Mobile — breathe, keep everything on-screen */
 @media (max-width: 640px) {
   .app-container {

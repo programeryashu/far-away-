@@ -636,7 +636,7 @@ function App() {
               onClick={handleShare}
               className="btn btn-primary"
               style={{ padding: '7px 12px', fontSize: '13px', gap: '6px' }}
-              aria-label="Copy shareable connection link"
+              aria-label="Share session link with your person"
             >
               {copied ? <Check size={14} /> : <Share2 size={14} />}
               <span className="btn-text">{copied ? 'Copied!' : 'Share Connection'}</span>
@@ -702,7 +702,7 @@ function App() {
             </p>
             <div className="hero-actions">
               <button onClick={handleShare} className="btn btn-primary cta-attention">
-                Create a connection
+                Share with your person
               </button>
               {heroJoinOpen ? (
                 <form className="hero-join" onSubmit={handleHeroJoin}>
@@ -801,32 +801,9 @@ function App() {
           </section>
         )}
 
-        {/* Node identity — the quiet plumbing. Two people, two places;
-            editable by whoever owns each side. */}
-        <section className="dashboard-grid" aria-label="Participants">
-          <LocationSelector
-            label="Person A"
-            userName={userNameA}
-            setUserName={setOwnNameA}
-            selectedCity={selectedCityA}
-            onCitySelect={setOwnCityA}
-            colorTheme="primary"
-            disabled={myRole === 'b'}
-          />
-
-          <LocationSelector
-            label="Person B"
-            userName={userNameB}
-            setUserName={setOwnNameB}
-            selectedCity={selectedCityB}
-            onCitySelect={setOwnCityB}
-            colorTheme="secondary"
-            disabled={myRole === 'a'}
-          />
-        </section>
-
         {/* Our live window: the shared-time signature — the product itself.
-            Hero treatment: dominant metric, maximum whitespace. */}
+            Hero treatment: dominant metric, maximum whitespace. This is the
+            first thing a judge sees — not the settings forms. */}
         <section className="live-hero">
           <LiveWindow
             cityA={selectedCityA}
@@ -878,13 +855,28 @@ function App() {
           />
         </section>
 
-        {/* Time planning — the day ribbon. Open layout. */}
-        <section>
-          <TimezoneSync
-            cityA={selectedCityA}
-            cityB={selectedCityB}
-            nameA={userNameA}
-            nameB={userNameB}
+        {/* Node identity — the quiet plumbing. Two people, two places;
+            editable by whoever owns each side. Moved below the hero so the
+            shared-time signature dominates the first screen. */}
+        <section className="dashboard-grid" aria-label="Participants">
+          <LocationSelector
+            label="Person A"
+            userName={userNameA}
+            setUserName={setOwnNameA}
+            selectedCity={selectedCityA}
+            onCitySelect={setOwnCityA}
+            colorTheme="primary"
+            disabled={myRole === 'b'}
+          />
+
+          <LocationSelector
+            label="Person B"
+            userName={userNameB}
+            setUserName={setOwnNameB}
+            selectedCity={selectedCityB}
+            onCitySelect={setOwnCityB}
+            colorTheme="secondary"
+            disabled={myRole === 'a'}
           />
         </section>
 
@@ -902,10 +894,36 @@ function App() {
           />
         </section>
 
-        {/* The measured line — one quiet footer fact about the link itself. */}
-        <section aria-label="Connection quality" className="quiet-strip">
-          <PingMeter connection={connection} hasPeer={hasRemotePeer} />
-        </section>
+        {/* Time planning and connection quality — secondary tools.
+            Collapsed by default to keep the main flow tight. */}
+        <details style={{ marginTop: 'var(--space-2)' }}>
+          <summary
+            style={{
+              cursor: 'pointer',
+              fontSize: 'var(--text-label-size)',
+              color: 'var(--text-muted)',
+              padding: 'var(--space-2) 0',
+              userSelect: 'none',
+              listStyle: 'none',
+            }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '10px', transition: 'transform 150ms ease', display: 'inline-block' }}>▶</span>
+              Time planning & connection quality
+            </span>
+          </summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--section-gap)' }}>
+            <TimezoneSync
+              cityA={selectedCityA}
+              cityB={selectedCityB}
+              nameA={userNameA}
+              nameB={userNameB}
+            />
+            <section aria-label="Connection quality" className="quiet-strip">
+              <PingMeter connection={connection} hasPeer={hasRemotePeer} />
+            </section>
+          </div>
+        </details>
       </main>
 
       {/* Footer */}

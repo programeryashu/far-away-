@@ -54,18 +54,15 @@
   --bg-inset: #0a0a0e;
   --border-glass: rgba(255, 255, 255, 0.08);
   --border-glass-strong: rgba(255, 255, 255, 0.15);
-  --border-glow: rgba(255, 255, 255, 0.12);
 
   /* Accent — a single brand hue. Secondary/accent are functional
      color-coding (side B, live status), used sparingly. */
   --primary: #d9a441;
   --primary-strong: #e4b45c;
   --primary-soft: rgba(217, 164, 65, 0.14);
-  --primary-glow: rgba(217, 164, 65, 0.28);
+
   --secondary: #e07bb4;
-  --secondary-glow: rgba(224, 123, 180, 0.24);
   --accent: #3ecfae;
-  --accent-glow: rgba(62, 207, 174, 0.24);
   --danger: #f87171;
 
   /* Text */
@@ -75,8 +72,11 @@
 
   /* Elevation — depth via contrast and hairline, not glow */
   --shadow-glow: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-neon: none;
   --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.6);
+
+  /* Surface tokens used by watch/cinema components */
+  --surface-raised: rgba(255, 255, 255, 0.03);
+  --surface-hover: rgba(255, 255, 255, 0.05);
 
   /* Radii — modest, restrained */
   --radius-lg: 12px;
@@ -305,11 +305,6 @@ p {
   padding: var(--space-4);
 }
 
-/* Glow helpers — intentionally subtle now */
-.glow-primary { box-shadow: 0 0 0 1px rgba(217, 164, 65, 0.3); }
-.glow-secondary { box-shadow: 0 0 0 1px rgba(224, 123, 180, 0.2); }
-.glow-accent { box-shadow: 0 0 0 1px rgba(62, 207, 174, 0.2); }
-
 /* Form controls */
 input, select, textarea {
   width: 100%;
@@ -377,10 +372,16 @@ label {
 .btn-primary {
   background: var(--primary);
   color: #1c1409;
+  transition: var(--transition-bounce), box-shadow 180ms ease;
 }
 
 .btn-primary:hover {
   background: var(--primary-strong);
+  box-shadow: 0 1px 4px rgba(217, 164, 65, 0.25);
+}
+
+.btn-primary:active {
+  box-shadow: none;
 }
 
 .btn-secondary {
@@ -464,6 +465,46 @@ label {
   animation: arrive-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Value crossfade — the shared-time metric fades between old and new values.
+   The parent applies this class when the value changes; it auto-removes. */
+@keyframes metric-crossfade {
+  0% { opacity: 0.35; transform: translateY(2px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.metric-crossfade {
+  animation: metric-crossfade 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Staggered row entrance — watch results, pick candidates.
+   Each row gets --stagger-index set by the parent; the delay is
+   computed from that index. */
+@keyframes stagger-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.watch-row,
+.watch-row--pick {
+  animation: stagger-in 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--stagger-index, 0) * 50ms);
+}
+
+/* Status badge color transition — the badge already carries a dynamic
+   border-color/color; a smooth transition makes state changes feel calm. */
+.badge[aria-live] {
+  transition: color 300ms ease, border-color 300ms ease;
+}
+
+/* CTA nudge — a single upward nudge on the primary action button.
+   Fires once on mount, then stops. No glow, no shadow. */
+@keyframes cta-nudge {
+  0% { transform: translateY(0); }
+  30% { transform: translateY(-3px); }
+  60% { transform: translateY(0); }
+}
+.cta-attention {
+  animation: cta-nudge 600ms cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+
 /* Status colors for timezone activity states */
 .status-sleep { color: var(--text-muted); }
 .status-work { color: var(--secondary); }
@@ -544,6 +585,60 @@ label {
   flex-direction: column;
   gap: var(--space-5);
   padding: var(--space-3) 2px var(--space-5);
+}
+
+/* LiveWindow hero — the product centerpiece. Larger type, more air. */
+.live-hero {
+  padding: var(--space-6) 0 var(--space-5);
+}
+
+.live-hero .metric {
+  font-size: clamp(48px, 6vw, 56px);
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+.live-hero .time-display {
+  font-size: clamp(24px, 3.5vw, 30px);
+}
+
+.live-hero .countdown-display {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.live-hero .hero-distance {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-glass);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  font-size: var(--text-label-size);
+  color: var(--text-muted);
+}
+
+/* Shared moment — open layout, facts first */
+.shared-moment-facts {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1fr;
+  gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-5) 0;
+}
+
+@media (max-width: 640px) {
+  .shared-moment-facts {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+    text-align: center;
+  }
+  .shared-moment-facts > div[style*="text-align: right"] {
+    text-align: center;
+  }
 }
 
 .hero-title {
@@ -1094,6 +1189,21 @@ label {
     width: 72px;
     margin: 0 auto;
   }
+}
+
+/* Open layout — content that sits directly on the page without a card.
+   Uses hairline dividers instead of box borders for separation. */
+.open-section {
+  padding: var(--space-6) 0;
+  border-top: 1px solid var(--border-glass);
+}
+
+.open-section-title {
+  font-size: var(--text-heading-size);
+  font-weight: var(--text-heading-weight);
+  letter-spacing: -0.02em;
+  margin-bottom: var(--space-4);
+  color: var(--text-secondary);
 }
 
 /* The measured line — the ping footer. Not a card; a quiet closing row. */

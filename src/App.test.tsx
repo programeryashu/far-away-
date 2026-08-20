@@ -542,7 +542,7 @@ describe('App session state machine', () => {
 
     // The existing realtime system (not a special AI transport) executed it:
     // the shared focus timer opened with a running countdown.
-    expect(screen.getByText('Deep Space Coffee')).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Focus' })).toBeTruthy();
     expect(screen.getByText(/shared focus session started on your device/i)).toBeTruthy();
   });
 });
@@ -597,7 +597,7 @@ describe('Session invite / join-code UX', () => {
     await createSessionAsA();
 
     // Peer is NOT connected: starting the timer surfaces the invitation.
-    fireEvent.click(screen.getByRole('button', { name: 'Open Deep Space Coffee' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Focus' }));
     fireEvent.click(screen.getByRole('button', { name: /start/i }));
     expect(screen.getByLabelText('Session invitation')).toBeTruthy();
     expect(screen.getByText('You started a shared timer.')).toBeTruthy();
@@ -615,7 +615,7 @@ describe('Session invite / join-code UX', () => {
     act(() => lastWs().emit(env('peer-joined', { peerId: 'p2', displayName: 'Kimi', cityJson })));
     await waitFor(() => expect(screen.getByText('Connected · your person is online')).toBeTruthy());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open Deep Space Coffee' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Focus' }));
     fireEvent.click(screen.getByRole('button', { name: /start/i }));
     expect(screen.queryByLabelText('Session invitation')).toBeNull();
     // The activity still went through the realtime transport.

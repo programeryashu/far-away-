@@ -88,9 +88,9 @@ export const TimezoneSync: React.FC<TimezoneSyncProps> = ({
   const labelB = nameB || 'User B';
 
   return (
-    <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <div className="open-section" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
       <div className="flex-between" style={{ gap: 'var(--space-3)' }}>
-        <h2 className="section-title">Plan around time</h2>
+        <h2 className="open-section-title" style={{ margin: 0 }}>Plan around time</h2>
         <button
           onClick={() => setUseSlider(!useSlider)}
           className="btn btn-outline"

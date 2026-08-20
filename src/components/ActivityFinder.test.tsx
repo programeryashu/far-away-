@@ -154,14 +154,14 @@ describe('ActivityFinder', () => {
     );
 
     // Timer start reports once.
-    fireEvent.click(screen.getByRole('button', { name: 'Open Deep Space Coffee' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Focus' }));
     fireEvent.click(screen.getByRole('button', { name: /start/i }));
     expect(onActivityStarted).toHaveBeenCalledWith('a shared timer');
 
     // Watch together reports once (choosing a movie starts the watch); the
     // in-player pause afterwards does not re-invite.
-    fireEvent.click(screen.getByRole('button', { name: 'Close Deep Space Coffee' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close Focus' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Watch' }));
     // Discovery first — never straight into playback.
     expect(screen.getByText('What do we want to watch?')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Search movies'), { target: { value: 'fight' } });
@@ -174,8 +174,8 @@ describe('ActivityFinder', () => {
     expect(onActivityStarted).toHaveBeenCalledTimes(2);
 
     // First canvas stroke reports once.
-    fireEvent.click(screen.getByRole('button', { name: 'Close SynchroCinema' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open Galactic Canvas' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close Watch' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Canvas' }));
     const canvas = document.querySelector('canvas') as HTMLCanvasElement;
     fireEvent.pointerDown(canvas, { clientX: 5, clientY: 5, pointerId: 1, pointerType: 'touch' });
     fireEvent.pointerUp(canvas, { clientX: 10, clientY: 10, pointerId: 1, pointerType: 'touch' });
@@ -184,7 +184,7 @@ describe('ActivityFinder', () => {
 
   it('sends exactly one timer action per click and reflects inbound state', () => {
     const { conn, emit } = renderFinder();
-    fireEvent.click(screen.getByRole('button', { name: 'Open Deep Space Coffee' })); // Deep Space Coffee
+    fireEvent.click(screen.getByRole('button', { name: 'Open Focus' }));
 
     const startBtn = screen.getByRole('button', { name: /start/i });
     fireEvent.click(startBtn);
@@ -241,7 +241,7 @@ describe('ActivityFinder', () => {
       }) as unknown as ServerEnvelope,
     );
     // Discovery first — the inherited movie is offered as a resume card.
-    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' })); // SynchroCinema
+    fireEvent.click(screen.getByRole('button', { name: 'Open Watch' }));
     expect(screen.getByText('Now watching')).toBeTruthy();
     expect(screen.getByText(/Fight Club/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /resume/i }));
@@ -272,10 +272,10 @@ describe('ActivityFinder', () => {
         },
       }) as unknown as ServerEnvelope,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' })); // SynchroCinema
+    fireEvent.click(screen.getByRole('button', { name: 'Open Watch' }));
     fireEvent.click(screen.getByRole('button', { name: /resume/i }));
 
-    const modal = screen.getByText('SynchroCinema').closest('.glass-panel') as HTMLElement;
+    const modal = screen.getByRole('dialog') as HTMLElement;
     const play = modal.querySelector('button.btn-primary') as HTMLButtonElement;
 
     fireEvent.click(play);
@@ -312,10 +312,10 @@ describe('ActivityFinder', () => {
         },
       }) as unknown as ServerEnvelope,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Watch' }));
     fireEvent.click(screen.getByRole('button', { name: /resume/i }));
 
-    const modal = screen.getByText('SynchroCinema').closest('.glass-panel') as HTMLElement;
+    const modal = screen.getByRole('dialog') as HTMLElement;
     const play = modal.querySelector('button.btn-primary') as HTMLButtonElement;
 
     // The server echoes cinema events back to the sender. The echo can be
@@ -353,7 +353,7 @@ describe('ActivityFinder', () => {
         },
       }) as unknown as ServerEnvelope,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Watch' }));
     fireEvent.click(screen.getByRole('button', { name: /resume/i }));
 
     // Give the clip a real duration. A real browser wraps currentTime to 0.2
@@ -392,7 +392,7 @@ describe('ActivityFinder', () => {
         },
       }) as unknown as ServerEnvelope,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' })); // SynchroCinema
+    fireEvent.click(screen.getByRole('button', { name: 'Open Watch' }));
     fireEvent.click(screen.getByRole('button', { name: /resume/i }));
 
     const seek = screen.getByLabelText('Seek video') as HTMLInputElement;
@@ -404,7 +404,7 @@ describe('ActivityFinder', () => {
 
   it('sends completed canvas strokes via pointer events (mouse and touch) and clears exactly once', () => {
     const { conn } = renderFinder();
-    fireEvent.click(screen.getByRole('button', { name: 'Open Galactic Canvas' })); // Galactic Canvas
+    fireEvent.click(screen.getByRole('button', { name: 'Open Canvas' }));
 
     const canvas = document.querySelector('canvas') as HTMLCanvasElement;
 
@@ -454,7 +454,7 @@ describe('ActivityFinder', () => {
     );
 
     // The activity opens and the canonical timer action fires exactly once.
-    expect(screen.getByText('Deep Space Coffee')).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Focus' })).toBeTruthy();
     expect(fake.conn.send).toHaveBeenCalledTimes(1);
     expect(fake.conn.send).toHaveBeenCalledWith(
       'timer',
@@ -513,7 +513,7 @@ describe('ActivityFinder', () => {
         windowMinutes={45}
       />,
     );
-    expect(screen.getByText('Galactic Canvas')).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Canvas' })).toBeTruthy();
     expect(fake.conn.send).not.toHaveBeenCalled();
   });
 
@@ -524,7 +524,7 @@ describe('ActivityFinder', () => {
   it('opens to discovery and searches a movie', async () => {
     stubWatchFetch();
     const { conn } = renderFinder();
-    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Watch' }));
 
     // Discovery first — search box and pick-for-us, no player yet.
     expect(screen.getByText('What do we want to watch?')).toBeTruthy();
@@ -541,7 +541,7 @@ describe('ActivityFinder', () => {
   it('shows both-region availability on the movie detail and starts the watch together', async () => {
     stubWatchFetch();
     const { conn } = renderFinder();
-    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Watch' }));
 
     fireEvent.change(screen.getByLabelText('Search movies'), { target: { value: 'fight' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
@@ -576,7 +576,7 @@ describe('ActivityFinder', () => {
       vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) }) as Response),
     );
     const { conn } = renderFinder();
-    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Watch' }));
 
     fireEvent.change(screen.getByLabelText('Search movies'), { target: { value: 'fight' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
@@ -603,7 +603,7 @@ describe('ActivityFinder', () => {
       return { ok: false, status: 404, json: async () => ({}) } as Response;
     }));
     const { conn } = renderFinder();
-    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Watch' }));
 
     fireEvent.click(screen.getByRole('button', { name: /pick something for us/i }));
     expect(await screen.findByText(/fits your 45-minute window/i)).toBeTruthy();
@@ -638,7 +638,7 @@ describe('ActivityFinder', () => {
       return { ok: false, status: 404, json: async () => ({}) } as Response;
     }));
     const { conn } = renderFinder();
-    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Watch' }));
     fireEvent.change(screen.getByLabelText('Search movies'), { target: { value: 'fight' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     const result = await screen.findByRole('button', { name: /Open Fight Club/ });
@@ -673,7 +673,7 @@ describe('ActivityFinder', () => {
       return { ok: false, status: 404, json: async () => ({}) } as Response;
     }));
     renderFinder();
-    fireEvent.click(screen.getByRole('button', { name: 'Open SynchroCinema' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Watch' }));
     fireEvent.click(screen.getByRole('button', { name: /pick something for us/i }));
     expect(await screen.findByText(/nothing in the popular list fits/i)).toBeTruthy();
   });

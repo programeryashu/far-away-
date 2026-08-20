@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { haversineKm } from '../lib/geo';
 import { computeLiveWindow, formatClock } from '../lib/time';
 
@@ -49,6 +49,20 @@ export const LiveWindow: React.FC<LiveWindowProps> = ({
   }, []);
 
   const info = computeLiveWindow(cityA.timezone, cityB.timezone, now);
+
+  // Crossfade the shared-time metric when its value changes.
+  const metricValue = formatHours(info.totalHours);
+  const prevMetricRef = useRef(metricValue);
+  const [metricFlash, setMetricFlash] = useState(false);
+  useEffect(() => {
+    if (prevMetricRef.current !== metricValue) {
+      prevMetricRef.current = metricValue;
+      setMetricFlash(true);
+      const id = window.setTimeout(() => setMetricFlash(false), 340);
+      return () => window.clearTimeout(id);
+    }
+  }, [metricValue]);
+
   const activeSeconds =
     info.active && info.activeEnd !== null ? (info.activeEnd - info.nowLocalA) * 3600 : 0;
   const distanceKm = haversineKm(cityA.lat, cityA.lng, cityB.lat, cityB.lng);
@@ -60,8 +74,20 @@ export const LiveWindow: React.FC<LiveWindowProps> = ({
   const statusColor = info.active ? 'var(--accent)' : 'var(--text-muted)';
   const statusLabel = info.active ? 'Live now' : 'Next window';
 
+  // Crossfade the countdown label when active/inactive changes.
+  const prevActiveRef = useRef(info.active);
+  const [statusFlash, setStatusFlash] = useState(false);
+  useEffect(() => {
+    if (prevActiveRef.current !== info.active) {
+      prevActiveRef.current = info.active;
+      setStatusFlash(true);
+      const id = window.setTimeout(() => setStatusFlash(false), 340);
+      return () => window.clearTimeout(id);
+    }
+  }, [info.active]);
+
   return (
-    <section className="glass-panel full-width" aria-label="Our live window">
+    <section aria-label="Our live window">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
         {/* The signature: their clock / the shared number / your clock. On a
             phone this stacks into the calm vertical composition. */}
@@ -75,10 +101,10 @@ export const LiveWindow: React.FC<LiveWindowProps> = ({
               {role === 'a' && <span style={{ color: 'var(--primary)' }}>you · </span>}
               {nameA || 'User A'}
             </span>
-            <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+            <div style={{ fontSize: '14px', color: 'var(--text-secondary)', marginTop: '2px' }}>
               {cityA.name}
             </div>
-            <div className="time-display" style={{ marginTop: '6px' }}>
+            <div className="time-display" style={{ marginTop: '8px' }}>
               {localTime(now, cityA.timezone)}
             </div>
           </div>
@@ -88,8 +114,8 @@ export const LiveWindow: React.FC<LiveWindowProps> = ({
           {/* The one shared number */}
           <div className="sig-metric" style={{ textAlign: 'center', minWidth: '180px', padding: '0 8px' }}>
             <span className="eyebrow">shared time today</span>
-            <div className="metric" style={{ marginTop: '2px' }}>
-              {formatHours(info.totalHours)}
+            <div className={`metric${metricFlash ? ' metric-crossfade' : ''}`} style={{ marginTop: '2px' }}>
+              {metricValue}
             </div>
             <div style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-secondary)', marginTop: '4px' }}>
               both awake &amp; free
@@ -107,10 +133,10 @@ export const LiveWindow: React.FC<LiveWindowProps> = ({
               {role === 'b' && <span style={{ color: 'var(--primary)' }}>you · </span>}
               {nameB || 'User B'}
             </span>
-            <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+            <div style={{ fontSize: '14px', color: 'var(--text-secondary)', marginTop: '2px' }}>
               {cityB.name}
             </div>
-            <div className="time-display" style={{ marginTop: '6px' }}>
+            <div className="time-display" style={{ marginTop: '8px' }}>
               {localTime(now, cityB.timezone)}
             </div>
           </div>
@@ -144,13 +170,11 @@ export const LiveWindow: React.FC<LiveWindowProps> = ({
               {info.active && hasPeer ? ' · spend it together' : ''}
             </div>
             <div
-              className="tabular"
+              className={`tabular countdown-display${statusFlash ? ' metric-crossfade' : ''}`}
               style={{
-                fontSize: '22px',
-                fontWeight: 600,
                 fontFamily: 'var(--font-mono)',
                 color: 'var(--text-primary)',
-                marginTop: '2px',
+                marginTop: '4px',
               }}
             >
               {info.active
@@ -162,7 +186,7 @@ export const LiveWindow: React.FC<LiveWindowProps> = ({
             <div style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-muted)', marginTop: '2px' }}>
               {info.active
                 ? 'left in this window'
-                : 'asynchronous until then'}
+                : 'plan something for then'}
             </div>
           </div>
 
@@ -175,25 +199,17 @@ export const LiveWindow: React.FC<LiveWindowProps> = ({
           </button>
         </div>
 
-        <hr className="hairline" />
-
-        {/* The physical fact, stated once, quietly. */}
-        <div
-          className="flex-between"
-          style={{
-            fontSize: 'var(--text-meta-size)',
-            color: 'var(--text-muted)',
-            flexWrap: 'wrap',
-            gap: 'var(--space-2)',
-          }}
-        >
+        {/* The physical fact, stated once, quietly — integrated into the hero. */}
+        <div className="hero-distance">
           <span className="tabular">
             {(distanceKm).toLocaleString(undefined, { maximumFractionDigits: 0 })} km apart
           </span>
+          <span style={{ color: 'var(--border-glass-strong)' }}>·</span>
           <span className="tabular">
             {(distanceKm * 0.621371).toLocaleString(undefined, { maximumFractionDigits: 0 })} miles
           </span>
-          <span>{hasPeer ? 'peer online' : 'solo preview'}</span>
+          <span style={{ color: 'var(--border-glass-strong)' }}>·</span>
+          <span>{hasPeer ? 'your person is here' : 'open a second tab to share this moment'}</span>
         </div>
       </div>
     </section>

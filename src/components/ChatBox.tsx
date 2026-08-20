@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, MessageSquare, CheckCheck } from 'lucide-react';
+import { Send, CheckCheck } from 'lucide-react';
 import type { Connection } from '../lib/connection';
 import { mergeMessages, serverMessagesToClient } from '../lib/reconcile';
 import { haversineKm } from '../lib/geo';
@@ -68,7 +68,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       id: '1',
       sender: peerName,
       simulated: true,
-      text: `Hey! Set up your location so we can calculate our orbital connection map.`,
+      text: `Hey! Set up your location so we can see our shared time.`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       status: 'delivered'
     }
@@ -193,7 +193,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       } else {
         const replies = [
           `Hey! Got your message instantly here in ${cityB.name}. That traveled fast!`,
-          `What are we up to? Should we open up the SynchroCinema or Galactic Canvas?`,
+          `What are we up to? Should we watch something together or draw on the canvas?`,
           `Connected across ${distance.toFixed(0)} km! Pretty cool interface, isn't it?`
         ];
         replyText = replies[Math.floor(Math.random() * replies.length)];
@@ -214,27 +214,25 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   };
 
   return (
-    <div id="chat-box" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '420px', maxHeight: '70vh' }}>
+    <div id="chat-box" style={{ display: 'flex', flexDirection: 'column', height: '420px', maxHeight: '70vh' }}>
       {/* Header */}
       <div
         className="flex-between"
         style={{
-          borderBottom: '1px solid var(--border-glass)',
           paddingBottom: 'var(--space-3)',
           marginBottom: 'var(--space-3)'
         }}
       >
         <div>
-          <h3 className="section-title" style={{ fontSize: 'var(--text-subheading-size)' }}>
-            <MessageSquare size={15} color="var(--text-secondary)" />
+          <h3 className="open-section-title" style={{ margin: 0, fontSize: 'var(--text-subheading-size)' }}>
             Conversation
           </h3>
           <span style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-muted)' }}>
             {hasPeer
-              ? 'live with your peer'
+              ? 'your person is here'
               : connection.mode === 'remote'
-                ? 'messages deliver when they rejoin'
-                : 'solo: open a second tab or share a connection'}
+                ? 'messages wait for them'
+                : 'open a second tab to chat in real time'}
           </span>
         </div>
       </div>

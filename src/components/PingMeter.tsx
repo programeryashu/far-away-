@@ -98,15 +98,15 @@ export const PingMeter: React.FC<PingMeterProps> = ({ connection, hasPeer }) => 
             }}
           />
           <div style={{ minWidth: 0 }}>
-            <span style={{ fontSize: 'var(--text-label-size)', fontWeight: 600 }}>
-              Ping the light
+            <span style={{ fontSize: 'var(--text-label-size)', fontWeight: 500, color: 'var(--text-secondary)' }}>
+              Connection latency
             </span>
             <div style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-muted)' }}>
               {connection.mode === 'remote'
-                ? 'a round-trip over your live session'
+                ? 'measured over your live session'
                 : hasPeer
-                  ? 'a round-trip between your tabs'
-                  : 'solo: open a second tab to measure a real round-trip'}
+                  ? 'between your tabs'
+                  : 'open a second tab to measure'}
             </div>
           </div>
         </div>

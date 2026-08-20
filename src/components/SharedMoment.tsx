@@ -125,30 +125,17 @@ export const SharedMoment: React.FC<SharedMomentProps> = ({
   const status: Status = started ? 'started' : response ? 'ready' : 'thinking';
 
   return (
-    <section className="glass-panel full-width" aria-label="Shared moment">
+    <section className="open-section" aria-label="Shared moment">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-        <div className="flex-between" style={{ gap: 'var(--space-3)' }}>
-          <div>
-            <span className="eyebrow">Shared moment</span>
-            <h2 className="section-title" style={{ marginTop: '2px' }}>
-              The best time to be together
-            </h2>
-          </div>
-          <span style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-muted)', textAlign: 'right' }}>
-            based on your overlap
-          </span>
+        <div>
+          <h2 className="open-section-title">
+            When you're both free
+          </h2>
         </div>
 
         {/* Deterministic facts — instant, exact, no AI involved. */}
         {facts && (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1.2fr 1fr',
-              gap: 'var(--space-4)',
-              alignItems: 'center',
-            }}
-          >
+          <div className="shared-moment-facts">
             <div>
               <span className="eyebrow" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {nameA || 'User A'}
@@ -190,9 +177,8 @@ export const SharedMoment: React.FC<SharedMomentProps> = ({
           </div>
         )}
 
-        {/* Recommendation surface */}
+        {/* Recommendation surface — open layout, no card. */}
         <div
-          className="group"
           style={{
             display: 'flex',
             flexDirection: 'column',
@@ -208,7 +194,7 @@ export const SharedMoment: React.FC<SharedMomentProps> = ({
           {status !== 'thinking' && rec && response && (
             <>
               <div style={{ fontSize: 'var(--text-label-size)', fontWeight: 600, color: 'var(--accent)' }}>
-                Best fit:{' '}
+Recommended:{' '}
                 <span style={{ color: 'var(--text-primary)' }}>
                   {rec.activity === 'cinema'
                     ? `${rec.durationMinutes}-minute watch`
@@ -226,7 +212,7 @@ export const SharedMoment: React.FC<SharedMomentProps> = ({
               <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
                 <button
                   onClick={handleStart}
-                  className="btn btn-primary"
+                  className="btn btn-primary cta-attention"
                   disabled={started}
                   style={{ gap: '6px', padding: '8px 16px', fontSize: 'var(--text-label-size)' }}
                 >

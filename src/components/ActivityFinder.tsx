@@ -237,11 +237,11 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
   const [videoDuration, setVideoDuration] = useState(0);
   const [videoMuted, setVideoMuted] = useState(true);
   const [syncStatus, setSyncStatus] = useState('Synced');
-  const [cinemaLogs, setCinemaLogs] = useState<string[]>(['Session initialized']);
+  const [cinemaLogs, setCinemaLogs] = useState<string[]>(['Ready']);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const cinemaTimerRef = useRef<number | null>(null);
 
-  // Deep Space Coffee Timer State
+  // Focus Timer State
   const [secondsLeft, setSecondsLeft] = useState(FOCUS_SECONDS);
   const [isRunning, setIsRunning] = useState(false);
   const [sessionLogs, setSessionLogs] = useState<string[]>([]);
@@ -749,25 +749,25 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
   const activities: Activity[] = [
     {
       id: 'cinema',
-      title: 'SynchroCinema',
+      title: 'Watch',
       desc: 'Watch',
       icon: <Video size={16} color="var(--text-secondary)" />
     },
     {
       id: 'canvas',
-      title: 'Galactic Canvas',
+      title: 'Canvas',
       desc: 'Draw',
       icon: <Paintbrush size={16} color="var(--text-secondary)" />
     },
     {
       id: 'cafe',
-      title: 'Deep Space Coffee',
+      title: 'Focus',
       desc: 'Focus',
       icon: <Coffee size={16} color="var(--text-secondary)" />
     },
     {
       id: 'chat',
-      title: 'Conversation',
+      title: 'Talk',
       desc: 'Talk',
       icon: <MessageCircle size={16} color="var(--text-secondary)" />
     }
@@ -786,12 +786,8 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
   };
 
   return (
-    <div id="activity-center" className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-      <div className="flex-between" style={{ gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-        <h2 className="section-title">Shared Activities</h2>
-        <span style={{ fontSize: 'var(--text-meta-size)', color: 'var(--text-muted)' }}>
-          synced between you
-        </span>
+    <div id="activity-center" className="open-section" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>        <div style={{ gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+        <h2 className="open-section-title">Do something together</h2>
       </div>
 
       <div className="activity-strip" aria-label="Shared activities">
@@ -811,14 +807,14 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
       </div>
 
       {/* ---------------------------------------------------- */}
-      {/* SynchroCinema Modal */}
+      {/* Watch Modal */}
       {/* ---------------------------------------------------- */}
       {activeModal === 'cinema' && (
         <div
           className="modal-overlay"
           role="dialog"
           aria-modal="true"
-          aria-label={watchScreen === 'player' ? 'SynchroCinema' : 'Watch'}
+          aria-label="Watch"
           onKeyDown={(e) => handleModalKeys(e, closeCinema)}
         >
           <div
@@ -828,12 +824,12 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
             <div className="flex-between">
               <h3 className="section-title" style={{ fontSize: 'var(--text-subheading-size)' }}>
                 <Video size={16} color="var(--text-secondary)" />
-                {watchScreen === 'player' ? 'SynchroCinema' : 'Watch'}
+                Watch
               </h3>
               <button
                 onClick={closeCinema}
                 className="modal-close"
-                aria-label={watchScreen === 'player' ? 'Close SynchroCinema' : 'Close Watch'}
+                aria-label="Close Watch"
               >
                 <X size={18} />
               </button>
@@ -924,6 +920,7 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                     {pickResult.pick && (
                       <button
                         className="watch-row watch-row--pick"
+                        style={{ '--stagger-index': 0 } as React.CSSProperties}
                         onClick={() => void openDetail(pickResult.pick!)}
                         aria-label={`Open ${pickResult.pick.title}`}
                       >
@@ -934,10 +931,11 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                     )}
                     {pickResult.movies
                       .filter((m) => !pickResult.pick || m.id !== pickResult.pick.id)
-                      .map((m) => (
+                      .map((m, i) => (
                         <button
                           key={m.id}
                           className="watch-row"
+                          style={{ '--stagger-index': i + 1 } as React.CSSProperties}
                           onClick={() => void openDetail(m)}
                           aria-label={`Open ${m.title}`}
                         >
@@ -963,10 +961,11 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                 )}
                 {searchStatus === 'done' && searchResults.length > 0 && (
                   <div className="watch-list" role="list" aria-label="Search results">
-                    {searchResults.map((m) => (
+                    {searchResults.map((m, i) => (
                       <button
                         key={m.id}
                         className="watch-row"
+                        style={{ '--stagger-index': i } as React.CSSProperties}
                         onClick={() => void openDetail(m)}
                         aria-label={`Open ${m.title}`}
                       >
@@ -1051,7 +1050,7 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                 <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
                   <button
                     onClick={() => void startWatch(detailMovie)}
-                    className="btn btn-primary"
+                    className="btn btn-primary cta-attention"
                     style={{ gap: '6px', padding: '9px 16px' }}
                   >
                     <Play size={14} />
@@ -1166,7 +1165,7 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
                     <Users size={13} />
                     {syncStatus}
                   </span>
-                  <span className="meta">one playback point on both screens</span>
+                  <span className="meta">synchronized</span>
                 </div>
 
                 <div className="group activity-log">
@@ -1183,14 +1182,14 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
       )}
 
       {/* ---------------------------------------------------- */}
-      {/* Galactic Canvas Modal */}
+      {/* Canvas Modal */}
       {/* ---------------------------------------------------- */}
       {activeModal === 'canvas' && (
         <div
           className="modal-overlay"
           role="dialog"
           aria-modal="true"
-          aria-label="Galactic Canvas"
+          aria-label="Canvas"
           onKeyDown={(e) => handleModalKeys(e, closeCanvas)}
         >
           <div
@@ -1200,9 +1199,9 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
             <div className="flex-between">
               <h3 className="section-title" style={{ fontSize: 'var(--text-subheading-size)' }}>
                 <Paintbrush size={16} color="var(--text-secondary)" />
-                Galactic Canvas
+                Canvas
               </h3>
-              <button onClick={closeCanvas} className="modal-close" aria-label="Close Galactic Canvas">
+              <button onClick={closeCanvas} className="modal-close" aria-label="Close Canvas">
                 <X size={18} />
               </button>
             </div>
@@ -1245,14 +1244,14 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
       )}
 
       {/* ---------------------------------------------------- */}
-      {/* Deep Space Coffee Modal */}
+      {/* Focus Modal */}
       {/* ---------------------------------------------------- */}
       {activeModal === 'cafe' && (
         <div
           className="modal-overlay"
           role="dialog"
           aria-modal="true"
-          aria-label="Deep Space Coffee"
+          aria-label="Focus"
           onKeyDown={(e) => handleModalKeys(e, closeCafe)}
         >
           <div
@@ -1262,9 +1261,9 @@ export const ActivityFinder: React.FC<ActivityFinderProps> = ({
             <div className="flex-between">
               <h3 className="section-title" style={{ fontSize: 'var(--text-subheading-size)' }}>
                 <Coffee size={16} color="var(--text-secondary)" />
-                Deep Space Coffee
+                Focus
               </h3>
-              <button onClick={closeCafe} className="modal-close" aria-label="Close Deep Space Coffee">
+              <button onClick={closeCafe} className="modal-close" aria-label="Close Focus">
                 <X size={18} />
               </button>
             </div>

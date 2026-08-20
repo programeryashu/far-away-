@@ -673,7 +673,7 @@ function App() {
       {/* Manual-copy fallback when both clipboard paths fail */}
       {manualCopyUrl && (
         <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '8px 24px 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
-          <div style={{ background: 'rgba(7,9,19,0.9)', border: '1px solid var(--border-glow)', borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+          <div style={{ background: 'rgba(7,9,19,0.9)', border: '1px solid var(--border-glass-strong)', borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontFamily: 'monospace', wordBreak: 'break-all' }}>
             Clipboard unavailable — copy this link manually:{' '}
             <strong style={{ color: 'var(--text-primary)' }}>{manualCopyUrl}</strong>
           </div>
@@ -686,13 +686,16 @@ function App() {
             Only in local mode; sessions and joins show their own surfaces. */}
         {sessionState === 'local' && (
           <section className="hero" aria-label="Get started with Orbit">
-            <h2 className="hero-title">Two places. One moment.</h2>
+            <h2 className="hero-title" style={{ fontSize: 'clamp(36px, 5vw, 48px)', letterSpacing: '-0.04em' }}>Orbit</h2>
+            <p className="hero-sub" style={{ fontSize: 'clamp(18px, 2.5vw, 24px)', color: 'var(--text-primary)', fontWeight: 500, letterSpacing: '-0.01em', lineHeight: 1.4 }}>
+              Two places. One moment.
+            </p>
             <p className="hero-sub">
               Distance doesn't just separate people. It gives them different moments.
               Orbit makes those moments shared.
             </p>
             <div className="hero-actions">
-              <button onClick={handleShare} className="btn btn-primary">
+              <button onClick={handleShare} className="btn btn-primary cta-attention">
                 Create a connection
               </button>
               {heroJoinOpen ? (
@@ -724,7 +727,7 @@ function App() {
         {sessionState === 'joining' &&
           (urlSessionId || urlCode) &&
           connection.mode === 'local' && (
-          <section className="glass-panel" style={{ borderColor: 'var(--border-glow)' }}>
+          <section className="glass-panel" style={{ borderColor: 'rgba(255, 255, 255, 0.12)' }}>
             <h2 style={{ fontSize: '20px', marginBottom: '8px' }}>
               You've been invited to a live session
             </h2>
@@ -796,9 +799,9 @@ function App() {
           />
         </section>
 
-        {/* Our live window: the shared-time signature — each person's
-            local time, the overlap between them, and the live countdown. */}
-        <section>
+        {/* Our live window: the shared-time signature — the product itself.
+            Hero treatment: dominant metric, maximum whitespace. */}
+        <section className="live-hero">
           <LiveWindow
             cityA={selectedCityA}
             cityB={selectedCityB}
@@ -849,15 +852,18 @@ function App() {
           />
         </section>
 
-        {/* Time planning and the conversation — the two everyday tools. */}
-        <section className="dashboard-grid" aria-label="Time and conversation">
+        {/* Time planning — the day ribbon. Open layout. */}
+        <section>
           <TimezoneSync
             cityA={selectedCityA}
             cityB={selectedCityB}
             nameA={userNameA}
             nameB={userNameB}
           />
+        </section>
 
+        {/* The conversation — quiet, secondary. */}
+        <section>
           <ChatBox
             cityA={selectedCityA}
             cityB={selectedCityB}
@@ -871,7 +877,7 @@ function App() {
         </section>
 
         {/* The measured line — one quiet footer fact about the link itself. */}
-        <section aria-label="Connection quality">
+        <section aria-label="Connection quality" className="quiet-strip">
           <PingMeter connection={connection} hasPeer={hasRemotePeer} />
         </section>
       </main>
@@ -882,21 +888,14 @@ function App() {
           borderTop: '1px solid var(--border-glass)',
           padding: '24px 0',
           marginTop: 'auto',
-          background: 'rgba(0,0,0,0.2)',
           textAlign: 'center',
-          fontSize: '13px',
+          fontSize: '12px',
           color: 'var(--text-muted)'
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <span>Orbit</span>
-          <span>•</span>
-          <span>Shared moments, even when you're far apart</span>
-          <span>•</span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-            Made with <Heart size={12} color="var(--secondary)" /> for Far Away
-          </span>
-        </div>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+          Orbit · <Heart size={11} color="var(--text-muted)" fill="var(--text-muted)" /> for Far Away
+        </span>
       </footer>
 
     </div>

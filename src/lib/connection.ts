@@ -40,6 +40,12 @@ export interface Connection {
   start(): void;
   stop(): void;
 
+  /**
+   * Manual retry after disconnection. Resets the reconnect attempt counter
+   * and reconnects. Called by the UI's Reconnect button.
+   */
+  retry?(): void;
+
   send<K extends ClientEventName>(event: K, payload: ClientPayload<K>): void;
 
   onEvent(listener: (event: ServerEnvelope) => void): () => void;
@@ -329,6 +335,11 @@ export class RemoteConnection implements Connection {
     // a dying connection says afterwards may reach the UI.
     this.stopped = true;
     this.client.disconnect();
+  }
+
+  retry(): void {
+    if (this.stopped) return;
+    this.client.retry();
   }
 
   send<K extends ClientEventName>(event: K, payload: ClientPayload<K>): void {

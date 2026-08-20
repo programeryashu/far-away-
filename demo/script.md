@@ -23,11 +23,11 @@
 
 **0:40–1:00 — Create + join**
 
-> "Device A creates a session." *(click New Session)* "Device B joins with the code — or the invite link." *(B types the code / opens the link)* "Both of us are now live in the same session, from two different cities."
+> "Device A creates a session." *(click Create a connection)* "Device B joins with the code — or the invite link." *(B types the code / opens the link)* "Both of us are now live in the same session, from two different cities."
 
 **1:00–1:20 — Shared Moment**
 
-> *(point at the two local times and the overlap)* "Right now it's 7:40 PM in Delhi and 3:10 PM in London — about two hours of comfortable overlap. Orbit turns that into a recommendation: a shared focus session, sized to the time we actually have."
+> *(point at the two local times and the overlap)* "Right now it's 7:40 PM in Delhi and 3:10 PM in London — about two hours of comfortable overlap. Orbit turns that into a recommendation, sized to the time we actually have."
 
 **1:20–1:40 — Start Together**
 
@@ -39,7 +39,7 @@
 
 **2:10–2:30 — Close**
 
-> "Orbit makes distance feel less like absence, and more like a different place in the same moment. Shared presence, shared activities, shared time — even when you're thousands of kilometers apart."
+> "Orbit makes distance feel less like absence, and more like a different place in the same moment. Two places. One moment."
 
 > *Judges question about technology:* see the 20-second explanation in `pitch.md`.
 
@@ -48,12 +48,12 @@
 1. [ ] A creates session (code visible)
 2. [ ] B joins with code/invite link
 3. [ ] Both peers online (Live Window)
-4. [ ] Shared Moment shows both cities, local times, overlap window
+4. [ ] "When you're both free" section shows both cities, local times, overlap window
 5. [ ] Recommendation appears (deterministic source)
 6. [ ] Click **Start Together** → activity starts on both devices
 7. [ ] B disconnects (airplane mode / WiFi off)
 8. [ ] A sees B offline; A runs another activity
-9. [ ] B reconnects
+9. [ ] B clicks **Reconnect** (or reconnects automatically)
 10. [ ] Missed events replay in order (no duplicates)
 11. [ ] Live sync resumes (B sees the next action live)
 

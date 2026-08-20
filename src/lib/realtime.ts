@@ -315,6 +315,20 @@ export class RealtimeClient {
     }
   }
 
+  /**
+   * Manual retry after exhaustion: reset the attempt counter and reconnect.
+   * Called by the UI's Reconnect button when the user wants another shot.
+   */
+  retry() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.reconnectAttempts = 0;
+    this.pendingEvents.clear();
+    this.connect();
+  }
+
   disconnect() {
     this.pending = [];
     this.pendingEvents.clear();

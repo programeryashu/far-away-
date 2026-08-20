@@ -376,7 +376,9 @@ describe('App session state machine', () => {
         await vi.advanceTimersByTimeAsync(60_000);
       });
     }
-    expect(screen.getByText('Connection lost')).toBeTruthy();
+    expect(screen.getAllByText('Connection lost').length).toBeGreaterThanOrEqual(1);
+    // The disconnected panel should offer a Reconnect button.
+    expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy();
     expect(FakeWebSocket.instances).toHaveLength(6);
   });
 

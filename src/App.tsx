@@ -534,6 +534,12 @@ function App() {
     [handleActivityStarted],
   );
 
+  // Reconnect: reset the reconnect attempt counter and reconnect via the
+  // existing connection's retry method. The session is still valid.
+  const handleReconnect = () => {
+    connectionRef.current?.retry?.();
+  };
+
   // Leave: stop the remote connection, clear session state, return to local
   // mode. Local names/cities and other app data are untouched.
   const handleLeave = async () => {
@@ -772,6 +778,26 @@ function App() {
             <button onClick={handleLeave} className="btn btn-outline">
               Leave session
             </button>
+          </section>
+        )}
+
+        {/* Disconnected — calm reconnect surface, not an alarm. */}
+        {sessionState === 'disconnected' && (
+          <section className="glass-panel" style={{ borderColor: 'rgba(255, 255, 255, 0.12)' }}>
+            <h2 style={{ fontSize: '20px', marginBottom: '8px' }}>
+              Connection lost
+            </h2>
+            <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
+              The link dropped. You can try reconnecting — your session is still alive.
+            </p>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={handleReconnect} className="btn btn-primary">
+                Reconnect
+              </button>
+              <button onClick={handleLeave} className="btn btn-outline">
+                Leave session
+              </button>
+            </div>
           </section>
         )}
 
